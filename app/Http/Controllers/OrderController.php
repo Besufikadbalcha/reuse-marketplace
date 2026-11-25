@@ -6,6 +6,12 @@ use App\Http\Requests\StoreOrderRequest;
 use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
+use App\Models\ProductPromotion;
+use App\Notifications\NewOrderNotification;
+use App\Notifications\OrderCancelledNotification;
+use App\Notifications\OrderPlacedNotification;
+use App\Notifications\PromotionResumedNotification;
+use App\Notifications\PromotionStoppedAfterOrderNotification;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -15,20 +21,22 @@ use Illuminate\View\View;
 
 class OrderController extends Controller
 {
-    public function create(Product $product): View|RedirectResponse
+    public function create(Request $request, Product $product): View|RedirectResponse
     {
         $product = $this->publiclyVisibleProduct($product);
 
+        abort_if($product->isOwnedBy($request->user()), 403, __('Sellers cannot buy their own products.'));
+
         if (! Product::query()->availableForPurchase()->whereKey($product->id)->exists()) {
-            return redirect()->route('products.show', $product->slug)->with('error', 'This item is no longer available.');
+            return redirect()->route('products.show', $product->slug)->with('error', __('This item is no longer available.'));
         }
 
         return view('checkout.create', [
             'product' => $product,
             'idempotencyKey' => (string) Str::uuid(),
             'fulfillmentMethods' => [
-                Order::FULFILLMENT_PICKUP => 'Pickup',
-                Order::FULFILLMENT_CASH_ON_DELIVERY => 'Cash on delivery',
+                Order::FULFILLMENT_PICKUP => __('Pickup'),
+                Order::FULFILLMENT_CASH_ON_DELIVERY => __('Cash on delivery'),
             ],
             'defaultFulfillmentMethod' => Order::FULFILLMENT_PICKUP,
         ]);
@@ -45,22 +53,26 @@ class OrderController extends Controller
             'delivery_address',
         ]);
         $product = $this->publiclyVisibleProduct($product);
+
+        abort_if($product->isOwnedBy($request->user()), 403, __('Sellers cannot buy their own products.'));
+
         $idempotencyKey = $validated['idempotency_key'];
 
         $replayedOrder = $this->findReplay($buyer->id, $idempotencyKey, $product->id);
 
         if ($replayedOrder !== null) {
-            return redirect()->route('orders.show', $replayedOrder)->with('status', 'This order was already placed.');
+            return redirect()->route('orders.show', $replayedOrder)->with('status', __('This order was already placed.'));
         }
 
         if (! Product::query()->availableForPurchase()->whereKey($product->id)->exists()) {
-            return redirect()->route('products.show', $product->slug)->with('error', 'This item is no longer available.');
+            return redirect()->route('products.show', $product->slug)->with('error', __('This item is no longer available.'));
         }
 
         $alreadyPlaced = false;
+        $stoppedPromotion = null;
 
         try {
-            $order = DB::transaction(function () use ($buyer, $product, $validated, $idempotencyKey): Order {
+            $order = DB::transaction(function () use ($buyer, $product, $validated, $idempotencyKey, &$stoppedPromotion): Order {
                 $replay = $this->findReplay($buyer->id, $idempotencyKey, $product->id);
 
                 if ($replay !== null) {
@@ -70,10 +82,11 @@ class OrderController extends Controller
                 $availableProduct = Product::query()
                     ->availableForPurchase()
                     ->whereKey($product->id)
+                    ->lockForUpdate()
                     ->first();
 
                 if ($availableProduct === null) {
-                    abort(409, 'This item is no longer available.');
+                    abort(409, __('This item is no longer available.'));
                 }
 
                 $orderNumber = $this->generateOrderNumber();
@@ -86,7 +99,7 @@ class OrderController extends Controller
                     ->update(['reservation_token' => $orderNumber]);
 
                 if ($reserved !== 1) {
-                    abort(409, 'This item is no longer available or its details changed.');
+                    abort(409, __('This item is no longer available or its details changed.'));
                 }
 
                 $order = Order::create([
@@ -107,10 +120,26 @@ class OrderController extends Controller
                     'product_title' => $availableProduct->title,
                     'price_minor' => $availableProduct->price_minor,
                     'quantity' => 1,
+                    'seller_status' => OrderItem::SELLER_STATUS_PENDING,
                 ]);
+
+                $promotion = ProductPromotion::query()
+                    ->forProduct($availableProduct->id)
+                    ->active()
+                    ->lockForUpdate()
+                    ->first();
+
+                if ($promotion !== null) {
+                    $promotion->stopForOrderAt((int) $order->id, now());
+                    $promotion->save();
+
+                    $stoppedPromotion = $promotion;
+                }
 
                 return $order;
             }, attempts: 3);
+
+            $alreadyPlaced = ! $order->wasRecentlyCreated;
         } catch (QueryException $exception) {
             if (! $this->isIdempotencyConflict($exception)) {
                 throw $exception;
@@ -126,22 +155,52 @@ class OrderController extends Controller
             $alreadyPlaced = true;
         }
 
-        return redirect()->route('orders.show', $order)->with(
-            'status',
-            $alreadyPlaced ? 'This order was already placed.' : 'Order placed successfully.'
-        );
+        if (! $alreadyPlaced) {
+            $buyer->notify(new OrderPlacedNotification($order));
+
+            $order->load('items.product.seller');
+
+            foreach ($order->items as $item) {
+                $item->product->seller?->notify(new NewOrderNotification($order, $item));
+            }
+
+            if ($stoppedPromotion !== null) {
+                $stoppedPromotion->seller?->notify(
+                    new PromotionStoppedAfterOrderNotification($stoppedPromotion, $order)
+                );
+            }
+        }
+
+        return redirect()->route('orders.show', $order)
+            ->with('status', $alreadyPlaced ? __('This order was already placed.') : __('Order placed successfully.'))
+            ->with('status_key', 'order_placed');
     }
 
     public function index(Request $request): View
     {
+        $buyer = $request->user();
+
         $orders = Order::query()
-            ->whereBelongsTo($request->user(), 'buyer')
+            ->whereBelongsTo($buyer, 'buyer')
+            ->where('status', '!=', Order::STATUS_CANCELLED)
             ->with('items.product')
             ->latest()
             ->orderByDesc('id')
             ->paginate(10);
 
-        return view('orders.index', ['orders' => $orders]);
+        $emptyMessage = __('You have not placed any orders yet.');
+
+        if ($orders->isEmpty() && Order::query()
+            ->whereBelongsTo($buyer, 'buyer')
+            ->where('status', Order::STATUS_CANCELLED)
+            ->exists()) {
+            $emptyMessage = __('No active orders to show. Cancelled orders are hidden from this list.');
+        }
+
+        return view('orders.index', [
+            'orders' => $orders,
+            'emptyMessage' => $emptyMessage,
+        ]);
     }
 
     public function show(Request $request, Order $order): View
@@ -152,23 +211,65 @@ class OrderController extends Controller
     public function cancel(Request $request, Order $order): RedirectResponse
     {
         $ownedOrder = $this->ownedOrder($request, $order);
+        $restoredPromotion = null;
 
-        DB::transaction(function () use ($ownedOrder): void {
+        DB::transaction(function () use ($ownedOrder, &$restoredPromotion): void {
+            $orderItem = $ownedOrder->items->first();
+            $product = $orderItem === null
+                ? null
+                : Product::query()->whereKey($orderItem->product_id)->lockForUpdate()->first();
+
+            $promotion = $orderItem === null
+                ? null
+                : ProductPromotion::query()
+                    ->forProduct($orderItem->product_id)
+                    ->stoppedByOrderId((int) $ownedOrder->id)
+                    ->lockForUpdate()
+                    ->first();
+
             $updated = Order::query()
                 ->whereKey($ownedOrder->id)
                 ->where('status', Order::STATUS_PENDING)
                 ->update(['status' => Order::STATUS_CANCELLED]);
 
             if ($updated !== 1) {
-                abort(409, 'Only pending orders can be cancelled.');
+                abort(409, __('Only pending orders can be cancelled.'));
             }
 
             Product::query()
                 ->where('reservation_token', $ownedOrder->order_number)
                 ->update(['reservation_token' => null]);
-        });
 
-        return redirect()->route('orders.show', $ownedOrder)->with('status', 'Order cancelled.');
+            if ($promotion === null
+                || $product === null
+                || $promotion->status !== ProductPromotion::STATUS_STOPPED_SOLD
+                || ! Product::query()->availableForPurchase()->whereKey($product->id)->exists()) {
+                return;
+            }
+
+            $conflict = ProductPromotion::query()
+                ->forProduct($product->id)
+                ->open()
+                ->whereKeyNot($promotion->id)
+                ->exists();
+
+            if ($conflict) {
+                return;
+            }
+
+            $promotion->restoreAfterOrderAt(now());
+            $promotion->save();
+
+            $restoredPromotion = $promotion;
+        }, attempts: 3);
+
+        $request->user()->notify(new OrderCancelledNotification($ownedOrder));
+
+        if ($restoredPromotion !== null) {
+            $restoredPromotion->seller?->notify(new PromotionResumedNotification($restoredPromotion));
+        }
+
+        return redirect()->route('orders.show', $ownedOrder)->with('status', __('Order cancelled.'))->with('status_key', 'order_cancelled');
     }
 
     private function publiclyVisibleProduct(Product $product): Product
@@ -192,7 +293,7 @@ class OrderController extends Controller
         }
 
         if ($order->items->first()?->product_id !== $productId) {
-            abort(409, 'That checkout key was already used for another order.');
+            abort(409, __('That checkout key was already used for another order.'));
         }
 
         return $order;

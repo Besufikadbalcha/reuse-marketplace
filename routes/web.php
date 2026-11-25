@@ -2,19 +2,35 @@
 
 use App\Http\Controllers\AdminProductController;
 use App\Http\Controllers\AdminProductImageController;
+use App\Http\Controllers\AdminPromotionController;
+use App\Http\Controllers\AdminPromotionProofController;
 use App\Http\Controllers\ForgotPasswordController;
 use App\Http\Controllers\LegalController;
+use App\Http\Controllers\LocaleController;
 use App\Http\Controllers\LoginController;
+use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProductImageController;
 use App\Http\Controllers\RegisterController;
 use App\Http\Controllers\ResetPasswordController;
+use App\Http\Controllers\SellerOrderController;
 use App\Http\Controllers\SellerProductController;
 use App\Http\Controllers\SellerProductImageController;
+use App\Http\Controllers\SellerPromotionController;
+use App\Http\Controllers\SellerPromotionProofController;
+use App\Http\Controllers\ThemeController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', [ProductController::class, 'index'])->name('home');
+
+Route::post('/locale', LocaleController::class)->name('locale.update');
+
+Route::put('/theme', [ThemeController::class, 'update'])->name('theme.update');
+
+Route::get('/categories/{category:slug}', [ProductController::class, 'category'])
+    ->where('category', '[a-z0-9-]+')
+    ->name('categories.show');
 
 Route::middleware('guest')->group(function () {
     Route::get('/register', [RegisterController::class, 'show'])->name('register');
@@ -30,6 +46,9 @@ Route::middleware('guest')->group(function () {
     Route::post('/reset-password', [ResetPasswordController::class, 'store'])->middleware('throttle:password-update')->name('password.update');
 });
 
+Route::view('/how-it-works', 'how-it-works')->name('how-it-works');
+Route::view('/about-us', 'about-us')->name('about-us');
+
 Route::get('/privacy-policy', [LegalController::class, 'privacy'])->name('privacy-policy');
 Route::get('/terms-and-conditions', [LegalController::class, 'terms'])->name('terms-and-conditions');
 
@@ -42,14 +61,24 @@ Route::get('/products/{slug}', [ProductController::class, 'show'])
     ->name('products.show');
 
 Route::middleware('auth')->group(function () {
+    Route::redirect('/my-account', '/orders')->name('my-account');
     Route::view('/dashboard', 'dashboard')->name('dashboard');
     Route::post('/logout', [LoginController::class, 'destroy'])->name('logout');
+
+    Route::get('/notifications', NotificationController::class)->name('notifications.index');
+    Route::patch('/notifications/read-all', [NotificationController::class, 'readAll'])->name('notifications.readAll');
+    Route::patch('/notifications/{notification}/read', [NotificationController::class, 'read'])->name('notifications.read');
 
     Route::get('/products/{product:slug}/checkout', [OrderController::class, 'create'])->name('checkout.create');
     Route::post('/products/{product:slug}/checkout', [OrderController::class, 'store'])->middleware('throttle:checkout')->name('checkout.store');
     Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
     Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show');
     Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->middleware('throttle:order-cancellation')->name('orders.cancel');
+
+    Route::get('/seller/orders', [SellerOrderController::class, 'index'])->name('seller.orders.index');
+    Route::get('/seller/orders/{order}', [SellerOrderController::class, 'show'])->name('seller.orders.show');
+    Route::post('/seller/orders/{order}/items/{orderItem}/confirm', [SellerOrderController::class, 'confirm'])->name('seller.orders.confirm');
+    Route::post('/seller/orders/{order}/items/{orderItem}/complete', [SellerOrderController::class, 'complete'])->name('seller.orders.complete');
 
     Route::get('/seller/products', [SellerProductController::class, 'index'])->name('seller.products.index');
     Route::get('/seller/products/create', [SellerProductController::class, 'create'])->name('seller.products.create');
@@ -61,6 +90,16 @@ Route::middleware('auth')->group(function () {
     Route::get('/seller/products/{product}/images/{image}', [SellerProductImageController::class, 'show'])
         ->scopeBindings()
         ->name('seller.products.images.show');
+
+    Route::get('/seller/products/{product}/promotions/create', [SellerPromotionController::class, 'create'])->name('seller.promotions.create');
+    Route::post('/seller/products/{product}/promotions', [SellerPromotionController::class, 'store'])->name('seller.promotions.store');
+    Route::get('/seller/promotions', [SellerPromotionController::class, 'index'])->name('seller.promotions.index');
+    Route::get('/seller/promotions/{promotion}', [SellerPromotionController::class, 'show'])->name('seller.promotions.show');
+    Route::get('/seller/promotions/{promotion}/resubmit', [SellerPromotionController::class, 'resubmit'])->name('seller.promotions.resubmit');
+    Route::post('/seller/promotions/{promotion}/resubmit', [SellerPromotionController::class, 'storeResubmission'])->name('seller.promotions.resubmit.store');
+    Route::get('/seller/promotions/{promotion}/payment-submissions/{paymentSubmission}/proof', [SellerPromotionProofController::class, 'show'])
+        ->scopeBindings()
+        ->name('seller.promotions.proof');
 });
 
 Route::middleware(['auth', 'can:moderateProducts'])->prefix('admin')->as('admin.')->group(function () {
@@ -71,4 +110,16 @@ Route::middleware(['auth', 'can:moderateProducts'])->prefix('admin')->as('admin.
     Route::get('/products/{product}/images/{image}', [AdminProductImageController::class, 'show'])
         ->scopeBindings()
         ->name('products.images.show');
+
+    Route::get('/promotions', [AdminPromotionController::class, 'index'])->name('promotions.index');
+    Route::get('/promotions/{promotion}', [AdminPromotionController::class, 'show'])->name('promotions.show');
+    Route::get('/promotions/{promotion}/payment-submissions/{paymentSubmission}/proof', [AdminPromotionProofController::class, 'show'])
+        ->scopeBindings()
+        ->name('promotions.proof');
+    Route::post('/promotions/{promotion}/payment-submissions/{paymentSubmission}/approve', [AdminPromotionController::class, 'approve'])
+        ->scopeBindings()
+        ->name('promotions.payments.approve');
+    Route::post('/promotions/{promotion}/payment-submissions/{paymentSubmission}/reject', [AdminPromotionController::class, 'reject'])
+        ->scopeBindings()
+        ->name('promotions.payments.reject');
 });

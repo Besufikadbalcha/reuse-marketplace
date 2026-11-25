@@ -55,6 +55,110 @@ test('authenticated buyers see a buy now action on eligible listings', function 
         ->assertSee('Buy now');
 });
 
+test('product owners do not see a buy now action or checkout link on their own listing', function () {
+    $seller = User::factory()->create(['name' => 'Balcha']);
+    $product = Product::factory()
+        ->for($seller, 'seller')
+        ->approved()
+        ->create([
+            'title' => 'Table',
+            'slug' => 'table',
+            'price_minor' => 250000,
+        ]);
+
+    $this->actingAs($seller)
+        ->get(route('products.show', $product->slug))
+        ->assertOk()
+        ->assertSee('Table')
+        ->assertSee('ETB 2,500.00')
+        ->assertSee('Balcha')
+        ->assertSee(__('Sellers cannot buy their own products.'))
+        ->assertDontSee('Buy now')
+        ->assertDontSee('Log in to buy now')
+        ->assertDontSee(route('checkout.create', $product), false)
+        ->assertViewHas('canPurchase', false)
+        ->assertViewHas('isOwnProduct', true);
+});
+
+test('other authenticated users still see a buy now action on the seller listing', function () {
+    $seller = User::factory()->create(['name' => 'Balcha']);
+    $buyer = User::factory()->create();
+    $product = Product::factory()
+        ->for($seller, 'seller')
+        ->approved()
+        ->create(['title' => 'Table', 'slug' => 'table']);
+
+    $this->actingAs($buyer)
+        ->get(route('products.show', $product->slug))
+        ->assertOk()
+        ->assertSee('Buy now')
+        ->assertSee(route('checkout.create', $product), false)
+        ->assertViewHas('canPurchase', true)
+        ->assertViewHas('isOwnProduct', false);
+});
+
+test('guests retain the login to buy flow on seller listings', function () {
+    $seller = User::factory()->create(['name' => 'Balcha']);
+    $product = Product::factory()
+        ->for($seller, 'seller')
+        ->approved()
+        ->create(['title' => 'Table', 'slug' => 'table']);
+
+    $this->get(route('products.show', $product->slug))
+        ->assertOk()
+        ->assertSee(__('Log in to buy this item.'))
+        ->assertSee('Log in to buy now')
+        ->assertSee(route('checkout.create', $product), false)
+        ->assertDontSee('Buy now');
+});
+
+test('product owners cannot open checkout for their own listing directly', function () {
+    $seller = User::factory()->create();
+    $product = Product::factory()
+        ->for($seller, 'seller')
+        ->approved()
+        ->create(['title' => 'Table', 'slug' => 'table']);
+
+    $this->actingAs($seller)
+        ->get(route('checkout.create', $product))
+        ->assertForbidden()
+        ->assertSee(__('Sellers cannot buy their own products.'));
+});
+
+test('product owners cannot submit an order for their own listing directly', function () {
+    $seller = User::factory()->create();
+    $product = Product::factory()
+        ->for($seller, 'seller')
+        ->approved()
+        ->create(['title' => 'Table', 'slug' => 'table']);
+
+    $this->actingAs($seller)
+        ->post(route('checkout.store', $product), buyerCheckoutPayload())
+        ->assertForbidden()
+        ->assertSee(__('Sellers cannot buy their own products.'));
+
+    expect(Order::count())->toBe(0);
+});
+
+test('a different buyer can still complete checkout for the seller listing', function () {
+    $seller = User::factory()->create(['name' => 'Balcha']);
+    $buyer = User::factory()->create();
+    $product = Product::factory()
+        ->for($seller, 'seller')
+        ->approved()
+        ->create(['title' => 'Table', 'slug' => 'table', 'price_minor' => 250000]);
+
+    $response = $this->actingAs($buyer)->post(route('checkout.store', $product), buyerCheckoutPayload());
+    $order = Order::query()->where('buyer_id', $buyer->id)->firstOrFail();
+
+    $response->assertRedirect(route('orders.show', $order))
+        ->assertSessionHas('status', 'Order placed successfully.');
+
+    expect($order->items()->first()->product_id)->toBe($product->id)
+        ->and($order->buyer_id)->toBe($buyer->id)
+        ->and($product->fresh()->seller_id)->toBe($seller->id);
+});
+
 test('checkout page explains cash payment and shows the total in ETB', function () {
     $buyer = User::factory()->create();
     $product = buyerCheckoutProduct(['title' => 'Clear Item', 'price_minor' => 123456]);
@@ -138,6 +242,7 @@ test('pickup orders store server calculated prices and no delivery details', fun
         ->and($item->product_title)->toBe('Pickup Item')
         ->and($item->price_minor)->toBe(123456)
         ->and($item->quantity)->toBe(1)
+        ->and($item->seller_status)->toBe(OrderItem::SELLER_STATUS_PENDING)
         ->and($product->fresh()->reservation_token)->toBe($order->order_number);
 });
 

@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Middleware\SetLocale;
+use App\Http\Middleware\SetTheme;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -12,7 +14,13 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->authenticateSessions();
+        $middleware->web(append: [
+            SetLocale::class,
+            SetTheme::class,
+        ]);
+
+        $middleware->redirectUsersTo(fn () => route('home'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

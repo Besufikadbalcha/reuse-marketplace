@@ -13,7 +13,7 @@ return [
     |
     */
 
-    'name' => env('APP_NAME', 'Laravel'),
+    'name' => env('APP_NAME', 'Reuse Marketplace'),
 
     /*
     |--------------------------------------------------------------------------
@@ -61,11 +61,11 @@ return [
     |
     | Here you may specify the default timezone for your application, which
     | will be used by the PHP date and date-time functions. The timezone
-    | is set to "UTC" by default as it is suitable for most use cases.
+    | is set to "Africa/Addis_Ababa" for this application.
     |
     */
 
-    'timezone' => 'UTC',
+    'timezone' => 'Africa/Addis_Ababa',
 
     /*
     |--------------------------------------------------------------------------
@@ -81,6 +81,30 @@ return [
     'locale' => env('APP_LOCALE', 'en'),
 
     'fallback_locale' => env('APP_FALLBACK_LOCALE', 'en'),
+
+    'supported_locales' => [
+        'en' => ['label' => 'English', 'direction' => 'ltr'],
+        'am' => ['label' => 'አማርኛ', 'direction' => 'ltr'],
+        'om' => ['label' => 'Afaan Oromoo', 'direction' => 'ltr'],
+    ],
+
+    'locale_formats' => [
+        'en' => [
+            'decimal_separator' => '.',
+            'thousands_separator' => ',',
+            'months' => ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+        ],
+        'am' => [
+            'decimal_separator' => '.',
+            'thousands_separator' => ',',
+            'months' => ['ጃን', 'ፈብ', 'ማር', 'ኤፕ', 'ሜይ', 'ጁን', 'ጁላ', 'ኦገ', 'ሴፕ', 'ኦክ', 'ኖቬ', 'ዲሴ'],
+        ],
+        'om' => [
+            'decimal_separator' => '.',
+            'thousands_separator' => ',',
+            'months' => ['Jir', 'Gur', 'Bit', 'Ebl', 'Caa', 'Wax', 'Ada', 'Hag', 'Ful', 'Onk', 'Sad', 'Mud'],
+        ],
+    ],
 
     'faker_locale' => env('APP_FAKER_LOCALE', 'en_US'),
 

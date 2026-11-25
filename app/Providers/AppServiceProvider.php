@@ -3,10 +3,12 @@
 namespace App\Providers;
 
 use App\Models\User;
+use App\Notifications\MarketplaceNotification;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\View;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rules\Password;
@@ -59,5 +61,23 @@ class AppServiceProvider extends ServiceProvider
         });
 
         Gate::define('moderateProducts', fn (User $user): bool => $user->isAdmin());
+
+        View::composer('components.site-header', function (\Illuminate\Contracts\View\View $view): void {
+            $user = auth()->user();
+
+            if ($user === null || ! MarketplaceNotification::databaseTableExists()) {
+                $view->with([
+                    'unreadNotificationsCount' => 0,
+                    'notificationDropdownItems' => collect(),
+                ]);
+
+                return;
+            }
+
+            $view->with([
+                'unreadNotificationsCount' => $user->unreadNotifications()->count(),
+                'notificationDropdownItems' => $user->notifications()->latest()->limit(30)->get(),
+            ]);
+        });
     }
 }

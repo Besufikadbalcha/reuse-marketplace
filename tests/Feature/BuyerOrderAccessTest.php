@@ -46,6 +46,78 @@ test('buyers can view their own order history and order detail', function () {
         ->assertSee('Pickup');
 });
 
+test('buyer order history hides cancelled orders while keeping their detail page accessible', function () {
+    $buyer = User::factory()->create();
+    $activeOrder = Order::factory()->for($buyer, 'buyer')->create(['order_number' => 'RM-ACTIVE01']);
+    $cancelledOrder = Order::factory()->for($buyer, 'buyer')->cancelled()->create(['order_number' => 'RM-CANCEL01']);
+
+    OrderItem::factory()->for($activeOrder)->create(['product_title' => 'Active History Item']);
+    OrderItem::factory()->for($cancelledOrder)->create(['product_title' => 'Cancelled History Item']);
+
+    $this->actingAs($buyer)
+        ->get(route('orders.index'))
+        ->assertOk()
+        ->assertSee('RM-ACTIVE01')
+        ->assertSee('Active History Item')
+        ->assertDontSee('RM-CANCEL01')
+        ->assertDontSee('Cancelled History Item');
+
+    $this->actingAs($buyer)
+        ->get(route('orders.show', $cancelledOrder))
+        ->assertOk()
+        ->assertSee('RM-CANCEL01');
+});
+
+test('buyer order history shows a helpful empty state when every order is cancelled', function () {
+    $buyer = User::factory()->create();
+    $cancelledOrder = Order::factory()->for($buyer, 'buyer')->cancelled()->create(['order_number' => 'RM-ONLYCANCEL01']);
+    OrderItem::factory()->for($cancelledOrder)->create(['product_title' => 'Cancelled Only Item']);
+
+    $this->actingAs($buyer)
+        ->get(route('orders.index'))
+        ->assertOk()
+        ->assertSee('No active orders to show. Cancelled orders are hidden from this list.')
+        ->assertDontSee('RM-ONLYCANCEL01');
+});
+
+test('buyer order history keeps the generic empty state without any orders', function () {
+    $buyer = User::factory()->create();
+
+    $this->actingAs($buyer)
+        ->get(route('orders.index'))
+        ->assertOk()
+        ->assertSee('You have not placed any orders yet.');
+});
+
+test('buyer order history pagination excludes cancelled orders', function () {
+    $buyer = User::factory()->create();
+
+    foreach (range(1, 11) as $index) {
+        $order = Order::factory()->for($buyer, 'buyer')->create([
+            'order_number' => 'RM-PAGE-'.str_pad((string) $index, 2, '0', STR_PAD_LEFT),
+        ]);
+
+        OrderItem::factory()->for($order)->create(['product_title' => 'Page Item '.$index]);
+    }
+
+    $cancelledOrder = Order::factory()->for($buyer, 'buyer')->cancelled()->create(['order_number' => 'RM-CANCELLED01']);
+    OrderItem::factory()->for($cancelledOrder)->create(['product_title' => 'Cancelled Page Item']);
+
+    $this->actingAs($buyer)
+        ->get(route('orders.index'))
+        ->assertOk()
+        ->assertSee('RM-PAGE-11')
+        ->assertDontSee('RM-CANCELLED01')
+        ->assertDontSee('Cancelled Page Item');
+
+    $this->actingAs($buyer)
+        ->get(route('orders.index', ['page' => 2]))
+        ->assertOk()
+        ->assertSee('RM-PAGE-01')
+        ->assertDontSee('RM-CANCELLED01')
+        ->assertDontSee('Cancelled Page Item');
+});
+
 test('buyers cannot view or cancel another buyers order', function () {
     $buyer = User::factory()->create();
     $otherBuyer = User::factory()->create();
@@ -152,15 +224,15 @@ test('orders that are no longer pending cannot be cancelled', function () {
         ->and($product->fresh()->reservation_token)->toBe($order->order_number);
 });
 
-test('the my orders link is available only to authenticated buyers', function () {
-    $this->get(route('home'))->assertOk()->assertDontSee('My Orders');
+test('the My Account link is available only to authenticated users', function () {
+    $this->get(route('home'))->assertOk()->assertDontSee('My Account');
 
     $buyer = User::factory()->create();
 
     $this->actingAs($buyer)
         ->get(route('home'))
         ->assertOk()
-        ->assertSee('My Orders');
+        ->assertSee('My Account');
 });
 
 test('private buyer delivery details are not exposed on public pages', function () {
