@@ -169,8 +169,8 @@ test('a seller can confirm a pending item without changing the buyer order', fun
         ->assertRedirect(route('seller.orders.show', $order))
         ->assertSessionHas('status', 'Item confirmed.');
 
-    expect($item->fresh()->seller_status)->toBe(OrderItem::SELLER_STATUS_CONFIRMED)
-        ->and($order->fresh()->status)->toBe(Order::STATUS_PENDING);
+    expect($item->fresh()->fulfillmentStatus())->toBe(OrderItem::FULFILLMENT_CONFIRMED)
+        ->and($order->fresh()->status)->toBe(Order::STATUS_CONFIRMED);
 });
 
 test('a seller cannot confirm an item that is not pending', function (string $sellerStatus) {
@@ -190,10 +190,13 @@ test('a seller cannot confirm an item that is not pending', function (string $se
     'completed' => OrderItem::SELLER_STATUS_COMPLETED,
 ]);
 
-test('a seller can complete a confirmed item without changing the buyer order', function () {
+test('a seller can complete an item after cash and buyer confirmation', function () {
     $seller = User::factory()->create();
     ['order' => $order, 'item' => $item] = sellerOrderFixture($seller, null, [], [
         'seller_status' => OrderItem::SELLER_STATUS_CONFIRMED,
+        'fulfillment_status' => OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION,
+        'seller_cash_received_at' => now()->subMinute(),
+        'buyer_confirmed_received_at' => now(),
     ]);
 
     $this->actingAs($seller)
@@ -201,8 +204,8 @@ test('a seller can complete a confirmed item without changing the buyer order', 
         ->assertRedirect(route('seller.orders.show', $order))
         ->assertSessionHas('status', 'Item marked complete.');
 
-    expect($item->fresh()->seller_status)->toBe(OrderItem::SELLER_STATUS_COMPLETED)
-        ->and($order->fresh()->status)->toBe(Order::STATUS_PENDING);
+    expect($item->fresh()->fulfillmentStatus())->toBe(OrderItem::FULFILLMENT_COMPLETED)
+        ->and($order->fresh()->status)->toBe(Order::STATUS_COMPLETED);
 });
 
 test('a seller cannot complete an item that is not confirmed', function (string $sellerStatus) {
@@ -235,7 +238,7 @@ test('seller status transitions leave the product reservation intact', function 
 
     expect($product->fresh()->reservation_token)->toBe('RM-RESERVE01')
         ->and(Product::query()->availableForPurchase()->whereKey($product->id)->exists())->toBeFalse()
-        ->and($order->fresh()->status)->toBe(Order::STATUS_PENDING);
+        ->and($order->fresh()->status)->toBe(Order::STATUS_CONFIRMED);
 });
 
 test('buyer cancellation leaves the seller fulfillment status untouched', function () {
@@ -340,24 +343,29 @@ test('a seller transition leaves another sellers item in the same order unchange
         ->post(route('seller.orders.confirm', [$order, $ownItem]))
         ->assertRedirect(route('seller.orders.show', $order));
 
-    expect($ownItem->fresh()->seller_status)->toBe(OrderItem::SELLER_STATUS_CONFIRMED)
-        ->and($otherItem->fresh()->seller_status)->toBe(OrderItem::SELLER_STATUS_CONFIRMED)
-        ->and($order->fresh()->status)->toBe(Order::STATUS_PENDING);
+    expect($ownItem->fresh()->fulfillmentStatus())->toBe(OrderItem::FULFILLMENT_CONFIRMED)
+        ->and($otherItem->fresh()->fulfillmentStatus())->toBe(OrderItem::FULFILLMENT_CONFIRMED)
+        ->and($order->fresh()->status)->toBe(Order::STATUS_CONFIRMED);
 });
 
 test('the complete endpoint denies another seller', function () {
     $seller = User::factory()->create();
     $otherSeller = User::factory()->create();
-    ['order' => $order, 'item' => $item] = sellerOrderFixture($seller, null, [], [
+    ['order' => $order, 'item' => $item] = sellerOrderFixture($seller, null, ['status' => Order::STATUS_CONFIRMED], [
         'seller_status' => OrderItem::SELLER_STATUS_CONFIRMED,
+        'fulfillment_status' => OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION,
+        'seller_cash_received_at' => now()->subMinute(),
+        'buyer_confirmed_received_at' => now(),
     ]);
 
     $this->actingAs($otherSeller)
         ->post(route('seller.orders.complete', [$order, $item]))
         ->assertNotFound();
 
-    expect($item->fresh()->seller_status)->toBe(OrderItem::SELLER_STATUS_CONFIRMED)
-        ->and($order->fresh()->status)->toBe(Order::STATUS_PENDING);
+    $item->refresh();
+    expect($item->fulfillment_status)->toBe(OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION)
+        ->and($item->seller_status)->toBe(OrderItem::SELLER_STATUS_CONFIRMED)
+        ->and($order->fresh()->status)->toBe(Order::STATUS_CONFIRMED);
 });
 
 test('a mismatched parent order cannot be used to transition an item', function (string $routeName, string $sellerStatus) {
@@ -399,3 +407,38 @@ test('seller order views show quantity separately from the line total', function
     'index' => ['seller.orders.index', false],
     'show' => ['seller.orders.show', true],
 ]);
+
+test('seller cannot complete item before buyer confirms receipt', function () {
+    $seller = User::factory()->create();
+    ['order' => $order, 'item' => $item] = sellerOrderFixture($seller, null, ['status' => Order::STATUS_CONFIRMED], [
+        'seller_status' => OrderItem::SELLER_STATUS_CONFIRMED,
+        'fulfillment_status' => OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION,
+        'seller_cash_received_at' => now()->subMinute(),
+        'buyer_confirmed_received_at' => null,
+    ]);
+
+    $this->actingAs($seller)
+        ->post(route('seller.orders.complete', [$order, $item]))
+        ->assertConflict();
+
+    expect($item->fresh()->fulfillmentStatus())->toBe(OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION)
+        ->and($order->fresh()->status)->toBe(Order::STATUS_CONFIRMED);
+});
+
+test('seller cannot complete disputed item', function () {
+    $seller = User::factory()->create();
+    ['order' => $order, 'item' => $item] = sellerOrderFixture($seller, null, ['status' => Order::STATUS_CONFIRMED], [
+        'seller_status' => OrderItem::SELLER_STATUS_CONFIRMED,
+        'fulfillment_status' => OrderItem::FULFILLMENT_DISPUTED,
+        'seller_cash_received_at' => now()->subMinute(),
+        'buyer_confirmed_received_at' => now(),
+        'buyer_disputed_at' => now(),
+        'buyer_dispute_reason' => 'Issue',
+    ]);
+
+    $this->actingAs($seller)
+        ->post(route('seller.orders.complete', [$order, $item]))
+        ->assertConflict();
+
+    expect($item->fresh()->fulfillmentStatus())->toBe(OrderItem::FULFILLMENT_DISPUTED);
+});

@@ -131,7 +131,7 @@ class SellerPromotionController extends Controller
         $this->authorizePromotion($request, $promotion);
 
         $promotion->load([
-            'product:id,title,slug,seller_id,status',
+            'product:id,title,slug,seller_id,status,archived_at,seller_archived_at',
             'package:id,code,name',
             'paymentSubmissions' => fn (HasMany $query) => $query->latestFirst(),
         ]);
@@ -217,7 +217,8 @@ class SellerPromotionController extends Controller
     {
         abort_unless(
             $product->seller_id === $request->user()->id
-                && $product->status === Product::STATUS_APPROVED,
+                && $product->status === Product::STATUS_APPROVED
+                && Product::query()->whereKey($product->id)->notArchived()->exists(),
             404
         );
     }
@@ -260,6 +261,7 @@ class SellerPromotionController extends Controller
                 ->whereKey($promotion->product_id)
                 ->where('seller_id', $request->user()->id)
                 ->where('status', Product::STATUS_APPROVED)
+                ->notArchived()
                 ->exists();
     }
 

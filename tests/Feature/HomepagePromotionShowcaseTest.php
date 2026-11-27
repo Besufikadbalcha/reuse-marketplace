@@ -161,10 +161,10 @@ test('the promoted hero card shows the product price condition and promotional l
 
     $response
         ->assertSee('Featured Promotion')
-        ->assertSee(__('homepage.hero.visual_tag'))
+        ->assertDontSee(__('homepage.hero.visual_tag'))
         ->assertSee(Product::formatMoney(123450))
         ->assertSee('Like New')
-        ->assertSee('relative h-60 overflow-hidden rounded-3xl bg-sage-100 dark:bg-forest-900 sm:h-64 lg:h-64', false)
+        ->assertSee('relative h-60 touch-pan-y select-none overflow-hidden rounded-3xl bg-sage-100 dark:bg-forest-900 sm:h-64 lg:h-64', false)
         ->assertSee('data-hero-showcase-carousel', false)
         ->assertDontSee('text-center text-xs font-medium text-forest-700 dark:text-mint-100/80', false);
 });
@@ -304,7 +304,7 @@ test('weights the repeating ticker sequence by immutable priority snapshot', fun
         ->assertSee('hero-promotion-ticker__track', false);
 });
 
-test('removes carousel indicators and slide-by-slide behavior', function () {
+test('keeps the continuous ticker while supporting direct dragging and swiping', function () {
     $seller = User::factory()->create();
     $category = showcaseCategory();
     $firstProduct = showcaseProduct($seller, $category, 'First Promoted Find');
@@ -324,6 +324,7 @@ test('removes carousel indicators and slide-by-slide behavior', function () {
         ->assertSee('data-hero-showcase-ticker', false)
         ->assertSee('data-hero-showcase-ticker-sequence', false)
         ->assertSee('aria-roledescription="ticker"', false)
+        ->assertSee('data-hero-showcase-board', false)
         ->assertDontSee('data-hero-showcase-previous', false)
         ->assertDontSee('data-hero-showcase-next', false)
         ->assertDontSee('data-hero-showcase-position', false)
@@ -336,8 +337,102 @@ test('removes carousel indicators and slide-by-slide behavior', function () {
         ->assertDontSee('window.setInterval', false)
         ->assertDontSee('window.clearInterval', false)
         ->assertDontSee('hero-showcase:change', false)
-        ->assertDontSee('track.style.transform', false)
-        ->assertDontSee("direction: 'alternate'", false);
+        ->assertDontSee("track.style.transform = 'translateX(0)';", false)
+        ->assertDontSee("direction: 'alternate'", false)
+        ->assertSee('animation.currentTime = next;', false)
+        ->assertSee('shiftBy(lastX - event.clientX)', false)
+        ->assertSee("window.addEventListener('pointermove', onPointerMove, { passive: false });", false)
+        ->assertSee("window.addEventListener('pointerup', onPointerUp);", false)
+        ->assertSee("event.target.closest('a[data-hero-showcase-ad]')", false)
+        ->assertDontSee("board?.addEventListener('pointermove'", false)
+        ->assertDontSee('board.setPointerCapture?.(event.pointerId);', false);
+});
+
+test('pauses automatic sliding on hover and resumes after a short delay', function () {
+    $seller = User::factory()->create();
+    $category = showcaseCategory();
+    $firstProduct = showcaseProduct($seller, $category, 'Hover Pause First');
+    $secondProduct = showcaseProduct($seller, $category, 'Hover Pause Second');
+
+    foreach ([$firstProduct, $secondProduct] as $product) {
+        showcaseImage($product);
+    }
+
+    showcasePromotion($seller, $firstProduct, showcasePackage(PromotionPackage::CODE_PREMIUM));
+    showcasePromotion($seller, $secondProduct, showcasePackage(PromotionPackage::CODE_BASIC));
+
+    $this->get(route('home'))
+        ->assertOk()
+        ->assertSee("board?.addEventListener('pointerenter'", false)
+        ->assertSee("board?.addEventListener('pointerleave'", false)
+        ->assertSee('cancelResume();', false)
+        ->assertSee('isHovered = true;', false)
+        ->assertSee('isHovered = false;', false)
+        ->assertSee('window.clearTimeout(resumeTimer)', false)
+        ->assertSee('resumeTimer = window.setTimeout', false)
+        ->assertSee('}, 700);', false)
+        ->assertSee('scheduleResume();', false)
+        ->assertSee("carousel.addEventListener('focusin'", false)
+        ->assertSee(':focus-visible', false)
+        ->assertSee('! isVisible || document.hidden || isHovered || isFocused || isDragging', false)
+        ->assertSee('animation.pause();', false)
+        ->assertSee('animation.play();', false);
+});
+
+test('supports mouse drag and touch swipe without hijacking vertical scrolling', function () {
+    $seller = User::factory()->create();
+    $category = showcaseCategory();
+    $firstProduct = showcaseProduct($seller, $category, 'Swipe First');
+    $secondProduct = showcaseProduct($seller, $category, 'Swipe Second');
+
+    foreach ([$firstProduct, $secondProduct] as $product) {
+        showcaseImage($product);
+    }
+
+    showcasePromotion($seller, $firstProduct, showcasePackage(PromotionPackage::CODE_PREMIUM));
+    showcasePromotion($seller, $secondProduct, showcasePackage(PromotionPackage::CODE_BASIC));
+
+    $response = $this->get(route('home'))->assertOk();
+    $content = (string) $response->getContent();
+
+    expect(substr_count($content, '<div class="mx-auto w-full" data-hero-showcase-carousel'))->toBe(1)
+        ->and(substr_count($content, 'const carousel = document.querySelector'))->toBe(1);
+
+    $response
+        ->assertSee('touch-pan-y select-none', false)
+        ->assertSee('draggable="false"', false)
+        ->assertSee("board?.addEventListener('dragstart'", false)
+        ->assertSee("board?.addEventListener('pointerdown'", false)
+        ->assertSee("window.addEventListener('pointermove', onPointerMove, { passive: false });", false)
+        ->assertSee("window.addEventListener('pointerup', onPointerUp);", false)
+        ->assertSee("window.addEventListener('pointercancel', onPointerCancel);", false)
+        ->assertDontSee('setPointerCapture', false)
+        ->assertSee('dragAxis', false)
+        ->assertSee("dragAxis === 'y'", false)
+        ->assertSee('didDrag = true;', false)
+        ->assertSee('dragDistance += lastX - event.clientX;', false)
+        ->assertSee('const step = adStepWidth();', false)
+        ->assertSee('shiftBy(direction * steps * step - dragDistance);', false)
+        ->assertSee('shiftBy(lastX - event.clientX)', false)
+        ->assertSee('event.preventDefault();', false)
+        ->assertSee('event.stopPropagation();', false)
+        ->assertSee('scheduleResume();', false)
+        ->assertSee('animation.currentTime = next;', false)
+        ->assertSee("event.target.closest('a[data-hero-showcase-ad]')", false);
+});
+
+test('keeps manual ticker movement available when reduced motion disables automatic animation', function () {
+    $seller = User::factory()->create();
+    $category = showcaseCategory();
+    $product = showcaseProduct($seller, $category, 'Reduced Motion Manual Find');
+    showcaseImage($product);
+
+    showcasePromotion($seller, $product, showcasePackage(PromotionPackage::CODE_BASIC));
+
+    $this->get(route('home'))
+        ->assertOk()
+        ->assertSee('manualOffset -= distance;', false)
+        ->assertSee('ticker.style.transform', false);
 });
 
 test('does not install carousel controls for a single promoted ad', function () {
@@ -411,14 +506,15 @@ test('keeps different promoted ad tiles proportional inside the hero media area'
     $this->get(route('home'))
         ->assertOk()
         ->assertSee('class="mx-auto w-full" data-hero-showcase-carousel', false)
-        ->assertSee('relative h-60 overflow-hidden rounded-3xl bg-sage-100 dark:bg-forest-900 sm:h-64 lg:h-64', false)
+        ->assertSee('relative h-60 touch-pan-y select-none overflow-hidden rounded-3xl bg-sage-100 dark:bg-forest-900 sm:h-64 lg:h-64', false)
         ->assertSee('data-hero-showcase-ticker', false)
         ->assertSee('class="hero-promotion-ticker__track flex h-full w-max"', false)
         ->assertSee('class="flex h-full w-max shrink-0 gap-2 pr-2"', false)
         ->assertSee('class="relative block h-full w-64 shrink-0 overflow-hidden focus-ring"', false)
         ->assertSee('class="max-h-full max-w-full object-contain"', false)
         ->assertDontSee('max-w-sm" data-hero-showcase-carousel', false)
-        ->assertDontSee('class="size-full object-cover"', false);
+        ->assertDontSee('class="size-full object-cover"', false)
+        ->assertSee('data-hero-showcase-image-track', false);
 });
 
 test('exposes every promoted product image in sort order', function () {
@@ -620,9 +716,10 @@ test('repeats a single ad seamlessly in both ticker sequences', function () {
         ->and($ids)->toBe(array_fill(0, 6, $product->id))
         ->and(substr_count($board, 'data-hero-showcase-ticker-sequence'))->toBe(2)
         ->and(substr_count($board, 'data-hero-showcase-photo'))->toBe(6)
-        ->and(substr_count($board, 'src="'.$firstImageUrl.'"'))->toBe(6)
-        ->and(substr_count($board, 'Sponsored'))->toBe(6)
-        ->and($board)->not->toContain('src="'.$secondImageUrl.'"');
+        ->and(substr_count($board, 'src="'.$firstImageUrl.'"'))->toBe(12)
+        ->and(substr_count($board, 'src="'.$secondImageUrl.'"'))->toBe(12)
+        ->and(substr_count($board, 'hero-promotion-image-track'))->toBe(6)
+        ->and(substr_count($board, 'Sponsored'))->toBe(6);
 
     foreach ($ads as $ad) {
         expect($ad['html'])->toContain($product->title)

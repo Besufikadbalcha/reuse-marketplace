@@ -41,7 +41,7 @@
                 <label for="condition" class="block text-xs font-medium text-forest-800 dark:text-mint-100">{{ __('Condition') }}</label>
                 <select id="condition" name="condition" required class="block w-full rounded-2xl border border-sage-200 bg-white/85 px-4 py-3.5 text-sm text-forest-900 shadow-sm focus:border-forest-600 focus:ring-4 focus:ring-forest-600/15 dark:border-white/15 dark:bg-white/5 dark:text-white dark:focus:border-mint-300 dark:focus:ring-mint-300/15">
                     @foreach ($conditions as $value => $label)
-                        <option value="{{ $value }}" @selected(old('condition', $isEditing ? $product->condition : '') === $value)>{{ __($label) }}</option>
+                        <option value="{{ $value }}" @selected(old('condition', $isEditing ? $product->condition : \App\Models\Product::CONDITION_LIKE_NEW) === $value)>{{ __($label) }}</option>
                     @endforeach
                 </select>
                 @error('condition')

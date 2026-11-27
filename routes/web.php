@@ -1,9 +1,11 @@
 <?php
 
+use App\Http\Controllers\AdminOrderController;
 use App\Http\Controllers\AdminProductController;
 use App\Http\Controllers\AdminProductImageController;
 use App\Http\Controllers\AdminPromotionController;
 use App\Http\Controllers\AdminPromotionProofController;
+use App\Http\Controllers\AdminSellerController;
 use App\Http\Controllers\ForgotPasswordController;
 use App\Http\Controllers\LegalController;
 use App\Http\Controllers\LocaleController;
@@ -12,17 +14,23 @@ use App\Http\Controllers\NotificationController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ProductController;
 use App\Http\Controllers\ProductImageController;
+use App\Http\Controllers\ProductSuggestionController;
 use App\Http\Controllers\RegisterController;
 use App\Http\Controllers\ResetPasswordController;
 use App\Http\Controllers\SellerOrderController;
 use App\Http\Controllers\SellerProductController;
 use App\Http\Controllers\SellerProductImageController;
+use App\Http\Controllers\SellerProfileController;
 use App\Http\Controllers\SellerPromotionController;
 use App\Http\Controllers\SellerPromotionProofController;
 use App\Http\Controllers\ThemeController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', [ProductController::class, 'index'])->name('home');
+
+Route::get('/search/suggestions', ProductSuggestionController::class)
+    ->middleware('throttle:60,1')
+    ->name('search.suggestions');
 
 Route::post('/locale', LocaleController::class)->name('locale.update');
 
@@ -56,6 +64,9 @@ Route::get('/products/{product}/images/{image}', [ProductImageController::class,
     ->scopeBindings()
     ->name('product-images.show');
 
+Route::get('/sellers/{seller}', [SellerProfileController::class, 'show'])
+    ->name('sellers.show');
+
 Route::get('/products/{slug}', [ProductController::class, 'show'])
     ->where('slug', '[a-z0-9-]+')
     ->name('products.show');
@@ -74,10 +85,15 @@ Route::middleware('auth')->group(function () {
     Route::get('/orders', [OrderController::class, 'index'])->name('orders.index');
     Route::get('/orders/{order}', [OrderController::class, 'show'])->name('orders.show');
     Route::post('/orders/{order}/cancel', [OrderController::class, 'cancel'])->middleware('throttle:order-cancellation')->name('orders.cancel');
+    Route::post('/orders/{order}/items/{orderItem}/confirm-received', [OrderController::class, 'confirmReceived'])->name('orders.items.confirm-received');
+    Route::post('/orders/{order}/items/{orderItem}/report-problem', [OrderController::class, 'reportProblem'])->middleware('throttle:order-cancellation')->name('orders.items.report-problem');
 
     Route::get('/seller/orders', [SellerOrderController::class, 'index'])->name('seller.orders.index');
     Route::get('/seller/orders/{order}', [SellerOrderController::class, 'show'])->name('seller.orders.show');
     Route::post('/seller/orders/{order}/items/{orderItem}/confirm', [SellerOrderController::class, 'confirm'])->name('seller.orders.confirm');
+    Route::post('/seller/orders/{order}/items/{orderItem}/ready-for-pickup', [SellerOrderController::class, 'readyForPickup'])->name('seller.orders.ready-for-pickup');
+    Route::post('/seller/orders/{order}/items/{orderItem}/out-for-delivery', [SellerOrderController::class, 'outForDelivery'])->name('seller.orders.out-for-delivery');
+    Route::post('/seller/orders/{order}/items/{orderItem}/cash-received', [SellerOrderController::class, 'recordCashReceived'])->name('seller.orders.cash-received');
     Route::post('/seller/orders/{order}/items/{orderItem}/complete', [SellerOrderController::class, 'complete'])->name('seller.orders.complete');
 
     Route::get('/seller/products', [SellerProductController::class, 'index'])->name('seller.products.index');
@@ -103,10 +119,18 @@ Route::middleware('auth')->group(function () {
 });
 
 Route::middleware(['auth', 'can:moderateProducts'])->prefix('admin')->as('admin.')->group(function () {
+    Route::get('/sellers', [AdminSellerController::class, 'index'])->name('sellers.index');
+    Route::get('/sellers/{seller}', [AdminSellerController::class, 'show'])->name('sellers.show');
+    Route::post('/sellers/{seller}/archive', [AdminSellerController::class, 'archive'])->name('sellers.archive');
+    Route::post('/sellers/{seller}/restore', [AdminSellerController::class, 'restore'])->name('sellers.restore');
+    Route::post('/sellers/{seller}/listings/restore', [AdminSellerController::class, 'restoreListings'])->name('sellers.listings.restore');
+
     Route::get('/products', [AdminProductController::class, 'index'])->name('products.index');
     Route::get('/products/{product}', [AdminProductController::class, 'show'])->name('products.show');
     Route::post('/products/{product}/approve', [AdminProductController::class, 'approve'])->name('products.approve');
     Route::post('/products/{product}/reject', [AdminProductController::class, 'reject'])->name('products.reject');
+    Route::delete('/products/{product}', [AdminProductController::class, 'destroy'])->name('products.destroy');
+    Route::post('/products/{product}/restore', [AdminProductController::class, 'restore'])->name('products.restore');
     Route::get('/products/{product}/images/{image}', [AdminProductImageController::class, 'show'])
         ->scopeBindings()
         ->name('products.images.show');
@@ -122,4 +146,7 @@ Route::middleware(['auth', 'can:moderateProducts'])->prefix('admin')->as('admin.
     Route::post('/promotions/{promotion}/payment-submissions/{paymentSubmission}/reject', [AdminPromotionController::class, 'reject'])
         ->scopeBindings()
         ->name('promotions.payments.reject');
+
+    Route::get('/orders', [AdminOrderController::class, 'index'])->name('orders.index');
+    Route::get('/orders/{order}', [AdminOrderController::class, 'show'])->name('orders.show');
 });

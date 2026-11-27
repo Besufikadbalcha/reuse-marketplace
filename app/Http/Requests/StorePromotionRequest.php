@@ -20,7 +20,8 @@ class StorePromotionRequest extends FormRequest
         return $product instanceof Product
             && $user !== null
             && $product->seller_id === $user->id
-            && $product->status === Product::STATUS_APPROVED;
+            && $product->status === Product::STATUS_APPROVED
+            && Product::query()->whereKey($product->id)->notArchived()->exists();
     }
 
     protected function failedAuthorization(): void

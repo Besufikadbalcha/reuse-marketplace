@@ -32,6 +32,7 @@
                 <span class="rounded-full bg-cream-100/80 px-3 py-1 font-medium text-forest-800 dark:bg-forest-900/70 dark:text-mint-100">{{ $product->category->name }}</span>
                 <span class="rounded-full bg-sage-100/80 px-3 py-1 font-medium text-forest-800 dark:bg-forest-900/70 dark:text-mint-100">{{ __($product->conditionLabel()) }}</span>
                 <span class="rounded-full bg-mint-100/80 px-3 py-1 font-medium text-forest-800 dark:bg-forest-900/70 dark:text-mint-100">{{ __('Seller: :name', ['name' => $product->seller->name]) }}</span>
+                <span class="rounded-full bg-sage-100/80 px-3 py-1 font-medium text-forest-800 dark:bg-forest-900/70 dark:text-mint-100">{{ __('Listing date') }}: {{ $product->created_at?->format('Y-m-d H:i') }}</span>
             </div>
 
             <h1 class="mt-5 text-4xl font-semibold tracking-tight text-forest-900 dark:text-white sm:text-5xl">{{ $product->title }}</h1>
@@ -59,7 +60,15 @@
                 </div>
             </div>
 
-            @if ($product->status === \App\Models\Product::STATUS_PENDING)
+            @if ($product->isArchived())
+                <div class="grid gap-4 rounded-[1.75rem] border border-white/70 bg-white/65 p-6 text-sm shadow-soft backdrop-blur-2xl dark:border-white/10 dark:bg-forest-950/70">
+                    <p class="text-forest-700 dark:text-mint-100/80">{{ __('This listing is archived and hidden from the public catalog.') }}</p>
+                    <form method="POST" action="{{ route('admin.products.restore', $product) }}">
+                        @csrf
+                        <x-button type="submit" variant="secondary" class="w-full">{{ __('Restore listing') }}</x-button>
+                    </form>
+                </div>
+            @elseif ($product->status === \App\Models\Product::STATUS_PENDING)
                 <div class="grid gap-4 rounded-[1.75rem] border border-white/70 bg-white/65 p-6 shadow-soft backdrop-blur-2xl dark:border-white/10 dark:bg-forest-950/70">
                     <form method="POST" action="{{ route('admin.products.approve', $product) }}">
                         @csrf
@@ -80,13 +89,24 @@
 
                         <button type="submit" class="inline-flex w-full items-center justify-center rounded-full border border-blush-300 px-6 py-3 text-sm font-semibold text-blush-700 transition hover:-translate-y-0.5 hover:bg-blush-100 focus-ring dark:border-blush-700 dark:text-blush-200 dark:hover:bg-blush-900/40">{{ __('Reject listing') }}</button>
                     </form>
+
+                    <form method="POST" action="{{ route('admin.products.destroy', $product) }}" onsubmit="return confirm('{{ __('Archive this listing?') }}')">
+                        @csrf
+                        @method('DELETE')
+                        <x-button type="submit" variant="ghost" class="w-full">{{ __('Archive') }}</x-button>
+                    </form>
                 </div>
             @else
                 <div class="rounded-[1.75rem] border border-white/70 bg-white/65 p-6 text-sm shadow-soft backdrop-blur-2xl dark:border-white/10 dark:bg-forest-950/70">
                     <p class="text-forest-700 dark:text-mint-100/80">{{ __('This listing has already been reviewed.') }}</p>
 
-                    @if ($product->status === \App\Models\Product::STATUS_APPROVED)
+                    @if ($product->status === \App\Models\Product::STATUS_APPROVED && ! $product->isArchived())
                         <x-button as="a" href="{{ route('products.show', $product->slug) }}" variant="secondary" class="mt-4 w-full">{{ __('View public listing') }}</x-button>
+                        <form method="POST" action="{{ route('admin.products.destroy', $product) }}" onsubmit="return confirm('{{ __('Archive this listing?') }}')" class="mt-3">
+                            @csrf
+                            @method('DELETE')
+                            <x-button type="submit" variant="ghost" class="w-full">{{ __('Archive') }}</x-button>
+                        </form>
                     @endif
                 </div>
             @endif

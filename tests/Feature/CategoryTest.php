@@ -48,16 +48,17 @@ test('removing a filter on a category archive keeps the category and remaining f
         $category,
         'q' => 'commuter',
         'condition' => Product::CONDITION_GOOD,
+        'sort' => 'price_asc',
     ]));
 
     $response->assertOk()
-        ->assertSee('href="'.e(route('categories.show', [$category, 'condition' => Product::CONDITION_GOOD])).'"', false)
-        ->assertSee('href="'.e(route('categories.show', [$category, 'q' => 'commuter'])).'"', false);
+        ->assertSee('href="'.e(route('categories.show', [$category, 'condition' => Product::CONDITION_GOOD, 'sort' => 'price_asc'])).'"', false)
+        ->assertSee('href="'.e(route('categories.show', [$category, 'q' => 'commuter', 'sort' => 'price_asc'])).'"', false);
 
     expect(collect($response->viewData('activeFilters'))->pluck('url', 'label')->all())->toBe([
-        'Category: Bicycles' => route('home', ['q' => 'commuter', 'condition' => Product::CONDITION_GOOD]),
-        'Search: commuter' => route('categories.show', [$category, 'condition' => Product::CONDITION_GOOD]),
-        'Condition: Good' => route('categories.show', [$category, 'q' => 'commuter']),
+        'Category: Bicycles' => route('home', ['q' => 'commuter', 'condition' => Product::CONDITION_GOOD, 'sort' => 'price_asc']),
+        'Search: commuter' => route('categories.show', [$category, 'condition' => Product::CONDITION_GOOD, 'sort' => 'price_asc']),
+        'Condition: Good' => route('categories.show', [$category, 'q' => 'commuter', 'sort' => 'price_asc']),
     ]);
 });
 
@@ -89,4 +90,67 @@ test('category archive filters stay scoped to the category', function () {
         ->assertSee('Category: Bicycles')
         ->assertSee('Road Bike')
         ->assertDontSee('Mountain Bike');
+});
+
+test('category archive autocomplete carries the current category into suggestions', function () {
+    $category = Category::factory()->create(['name' => 'Bicycles']);
+    $otherCategory = Category::factory()->create(['name' => 'Furniture']);
+
+    $inCategory = Product::factory()
+        ->for($category, 'category')
+        ->approved()
+        ->create(['title' => 'Commuter Bicycle']);
+
+    Product::factory()
+        ->for($otherCategory, 'category')
+        ->approved()
+        ->create(['title' => 'Commuter Sofa']);
+
+    $archive = $this->get(route('categories.show', [$category, 'q' => 'commuter']))->assertOk();
+
+    $archive
+        ->assertSee('data-category="'.$category->id.'"', false)
+        ->assertSee("params.set('category', root.dataset.category);", false);
+
+    $this->getJson(route('search.suggestions', ['q' => 'commuter', 'category' => $category->id]))
+        ->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $inCategory->id);
+});
+
+test('category archive supports title sorting and preserves the sort in filter URLs', function () {
+    $category = Category::factory()->create(['name' => 'Bicycles']);
+    $otherCategory = Category::factory()->create(['name' => 'Furniture']);
+
+    $apple = Product::factory()
+        ->for($category, 'category')
+        ->approved()
+        ->create(['title' => 'apple Bike', 'price_minor' => 2000]);
+
+    $zebra = Product::factory()
+        ->for($category, 'category')
+        ->approved()
+        ->create(['title' => 'Zebra Bike', 'price_minor' => 2000]);
+
+    Product::factory()
+        ->for($otherCategory, 'category')
+        ->approved()
+        ->create(['title' => 'Antique Desk', 'price_minor' => 2000]);
+
+    $response = $this->get(route('categories.show', [
+        $category,
+        'q' => 'bike',
+        'min_price' => '10',
+        'sort' => 'title_asc',
+    ]))->assertOk();
+
+    expect($response['products']->pluck('id')->all())->toBe([$apple->id, $zebra->id]);
+    expect($response->viewData('filters')['sort'])->toBe('title_asc');
+
+    $response->assertSee('<option value="title_asc" selected>'.__('Title: A to Z').'</option>', false);
+
+    collect($response['activeFilters'])->pluck('url')
+        ->each(fn (string $url) => expect($url)->toContain('sort=title_asc'));
+
+    expect($response['clearPriceRangeUrl'])->toContain('sort=title_asc');
 });

@@ -55,7 +55,7 @@ test('authenticated buyers see a buy now action on eligible listings', function 
         ->assertSee('Buy now');
 });
 
-test('product owners do not see a buy now action or checkout link on their own listing', function () {
+test('product owners see edit and archive actions instead of a buy now action on their own listing', function () {
     $seller = User::factory()->create(['name' => 'Balcha']);
     $product = Product::factory()
         ->for($seller, 'seller')
@@ -72,7 +72,11 @@ test('product owners do not see a buy now action or checkout link on their own l
         ->assertSee('Table')
         ->assertSee('ETB 2,500.00')
         ->assertSee('Balcha')
-        ->assertSee(__('Sellers cannot buy their own products.'))
+        ->assertSee(__('Edit listing'))
+        ->assertSee(route('seller.products.edit', $product), false)
+        ->assertSee(__('Archive listing'))
+        ->assertSee(route('seller.products.destroy', $product), false)
+        ->assertDontSee(__('Sellers cannot buy their own products.'))
         ->assertDontSee('Buy now')
         ->assertDontSee('Log in to buy now')
         ->assertDontSee(route('checkout.create', $product), false)
@@ -167,10 +171,9 @@ test('checkout page explains cash payment and shows the total in ETB', function 
         ->get(route('checkout.create', $product))
         ->assertOk()
         ->assertViewIs('checkout.create')
-        ->assertSee('Both options are paid in cash.')
-        ->assertSee('Pay cash when the product is delivered to you.')
-        ->assertSee('Pay cash when you collect the item from the seller.')
-        ->assertSee('You and the seller arrange the pickup details.')
+        ->assertSee(__('Choose how you will get the item. Both options are paid in cash.'))
+        ->assertSee(__('Pay cash when the product is delivered to you. Provide a delivery address and contact details so the seller can arrange delivery.'))
+        ->assertSee(__('Pay cash when you collect the item from the seller. You and the seller will arrange pickup details after placing the order.'))
         ->assertSee('no online payment is needed.')
         ->assertSee('You chose')
         ->assertSee('Total to pay')

@@ -306,3 +306,60 @@ test('order cancellation is rate limited after five attempts', function () {
 
     expect($orders[5]->fresh()->status)->toBe(Order::STATUS_PENDING);
 });
+
+test('buyer can confirm receipt only after seller records cash', function () {
+    $buyer = User::factory()->create();
+    $seller = User::factory()->create();
+    $product = buyerOrderProduct(['title' => 'Confirmable Item']);
+    $order = Order::factory()->for($buyer, 'buyer')->create(['status' => Order::STATUS_CONFIRMED]);
+    $item = OrderItem::factory()->for($order)->for($product, 'product')->create([
+        'product_title' => 'Confirmable Item',
+        'fulfillment_status' => OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION,
+        'seller_status' => OrderItem::SELLER_STATUS_CONFIRMED,
+        'seller_cash_received_at' => now()->subMinute(),
+    ]);
+
+    $this->actingAs($buyer)
+        ->post(route('orders.items.confirm-received', [$order, $item]))
+        ->assertRedirect(route('orders.show', $order))
+        ->assertSessionHas('status');
+
+    expect($item->fresh()->buyer_confirmed_received_at)->not->toBeNull()
+        ->and($item->fresh()->fulfillmentStatus())->toBe(OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION);
+});
+
+test('buyer cannot confirm receipt before cash is recorded', function () {
+    $buyer = User::factory()->create();
+    $product = buyerOrderProduct();
+    $order = Order::factory()->for($buyer, 'buyer')->create(['status' => Order::STATUS_CONFIRMED]);
+    $item = OrderItem::factory()->for($order)->for($product, 'product')->create([
+        'fulfillment_status' => OrderItem::FULFILLMENT_READY_FOR_PICKUP,
+        'seller_status' => OrderItem::SELLER_STATUS_CONFIRMED,
+    ]);
+
+    $this->actingAs($buyer)
+        ->post(route('orders.items.confirm-received', [$order, $item]))
+        ->assertConflict();
+
+    expect($item->fresh()->buyer_confirmed_received_at)->toBeNull();
+});
+
+test('buyer can report a problem and admin can review it', function () {
+    $buyer = User::factory()->create();
+    $product = buyerOrderProduct(['title' => 'Problem Item']);
+    $order = Order::factory()->for($buyer, 'buyer')->create(['status' => Order::STATUS_CONFIRMED, 'order_number' => 'RM-PROBLEM01']);
+    $item = OrderItem::factory()->for($order)->for($product, 'product')->create([
+        'product_title' => 'Problem Item',
+        'fulfillment_status' => OrderItem::FULFILLMENT_READY_FOR_PICKUP,
+        'seller_status' => OrderItem::SELLER_STATUS_CONFIRMED,
+    ]);
+
+    $this->actingAs($buyer)
+        ->post(route('orders.items.report-problem', [$order, $item]), ['reason' => 'Package was damaged'])
+        ->assertRedirect(route('orders.show', $order));
+
+    $item->refresh();
+    expect($item->fulfillmentStatus())->toBe(OrderItem::FULFILLMENT_DISPUTED)
+        ->and($item->buyer_dispute_reason)->toBe('Package was damaged')
+        ->and($order->fresh()->status)->toBe(Order::STATUS_CONFIRMED);
+});

@@ -347,6 +347,36 @@ test('cancellation does not restore a promotion while the product remains unavai
     Notification::assertNotSentTo($seller, PromotionResumedNotification::class);
 });
 
+test('cancellation does not restore a promotion while the product is archived', function () {
+    $this->travelTo('2026-11-25 12:00:00');
+
+    $buyer = User::factory()->create();
+    $seller = User::factory()->create();
+    $product = lifecycleProduct($seller, ['title' => 'Archived Lamp', 'price_minor' => 20000]);
+    $promotion = lifecycleActivePromotion($seller, $product, '2026-11-25 12:05:00');
+
+    $this->actingAs($buyer)
+        ->post(route('checkout.store', $product), lifecycleCheckoutPayload())
+        ->assertRedirect();
+
+    $order = Order::query()->where('buyer_id', $buyer->id)->firstOrFail();
+
+    $product->update(['archived_at' => now()]);
+
+    Notification::fake();
+
+    $this->actingAs($buyer)
+        ->post(route('orders.cancel', $order))
+        ->assertRedirect();
+
+    $promotion->refresh();
+
+    expect($promotion->status)->toBe(ProductPromotion::STATUS_STOPPED_SOLD)
+        ->and($promotion->stopped_by_order_id)->toBe($order->id);
+
+    Notification::assertNotSentTo($seller, PromotionResumedNotification::class);
+});
+
 test('cancellation does not restore a promotion when another open promotion conflicts', function () {
     $this->travelTo('2026-11-25 12:00:00');
 

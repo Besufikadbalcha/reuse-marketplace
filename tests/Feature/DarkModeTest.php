@@ -74,6 +74,15 @@ test('theme switcher offers the opposite theme', function () {
         ->assertSee('value="light"', false);
 });
 
+test('search suggestions and empty results include dark styling', function () {
+    $this->withSession(['theme' => 'dark'])
+        ->get(route('home', ['q' => 'missing']))
+        ->assertOk()
+        ->assertSee('dark:border-white/15 dark:bg-forest-900/95', false)
+        ->assertSee('dark:text-mint-100/80', false)
+        ->assertSee('dark:bg-mint-300 dark:text-forest-950', false);
+});
+
 test('changing theme preserves the selected locale', function () {
     $response = $this->from(route('home'))
         ->withSession(['locale' => 'am'])

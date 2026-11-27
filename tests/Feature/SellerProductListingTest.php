@@ -124,7 +124,7 @@ test('a seller sees their own listings filtered by status and not other sellers 
         ->assertSee('My Pending Listing');
 });
 
-test('the create page renders active categories conditions and locations', function () {
+test('the create page renders active categories conditions and locations and defaults condition to like new', function () {
     $category = Category::factory()->create(['name' => 'Active Category']);
     Category::factory()->inactive()->create(['name' => 'Inactive Category']);
     $activeLocation = Location::query()->create(['name' => 'Active Location']);
@@ -138,7 +138,8 @@ test('the create page renders active categories conditions and locations', funct
         ->assertSee('Active Location')
         ->assertSee('value="'.$activeLocation->id.'"', false)
         ->assertDontSee('Inactive Location')
-        ->assertSee('Like New');
+        ->assertSee('Like New')
+        ->assertSee('value="'.Product::CONDITION_LIKE_NEW.'" selected', false);
 });
 
 test('a seller can select and save a seeded location', function () {
@@ -214,6 +215,28 @@ test('a seller can create a pending listing with privately stored images', funct
         ->assertSee('Test Listing');
 
     Storage::disk('public')->assertEmpty();
+});
+
+test('a new seller listing defaults to like new when condition is omitted', function () {
+    Storage::fake('local');
+
+    $seller = User::factory()->create();
+    $category = Category::factory()->create();
+    $location = Location::query()->create(['name' => 'Default Condition Location']);
+
+    $payload = sellerProductTestPayload([
+        'category_id' => $category->id,
+        'location_id' => $location->id,
+    ]);
+    unset($payload['condition']);
+
+    $this->actingAs($seller)
+        ->post(route('seller.products.store'), $payload)
+        ->assertRedirect(route('seller.products.index'));
+
+    $product = Product::query()->where('seller_id', $seller->id)->latest('id')->firstOrFail();
+
+    expect($product->condition)->toBe(Product::CONDITION_LIKE_NEW);
 });
 
 test('seller id status and rejection reason from the request are ignored on create', function () {
@@ -381,6 +404,29 @@ test('a seller can still update their own product', function () {
     expect($product->images()->count())->toBe(1);
 });
 
+test('editing an existing listing retains its existing condition when condition is omitted', function () {
+    $seller = User::factory()->create();
+    $category = Category::factory()->create();
+    $location = Location::query()->create(['name' => 'Keep Condition Location']);
+    $product = Product::factory()->for($seller, 'seller')->for($category)->create([
+        'location_id' => $location->id,
+        'condition' => Product::CONDITION_FAIR,
+        'status' => Product::STATUS_APPROVED,
+    ]);
+    sellerProductTestGiveImage($product, $seller);
+
+    $payload = sellerProductTestUpdatePayload($product, [
+        'title' => 'Condition Kept',
+    ]);
+    unset($payload['condition']);
+
+    $this->actingAs($seller)
+        ->put(route('seller.products.update', $product), $payload)
+        ->assertRedirect(route('seller.products.show', $product));
+
+    expect($product->refresh()->condition)->toBe(Product::CONDITION_FAIR);
+});
+
 test('another seller gets not found and cannot change the product or its images', function () {
     $seller = User::factory()->create();
     $otherSeller = User::factory()->create();
@@ -520,13 +566,13 @@ test('a seller cannot approve their own pending listing through an update', func
         ->and($product->rejection_reason)->toBeNull();
 });
 
-test('a seller can delete a listing without order history and its stored images are removed', function () {
+test('a seller can archive a listing and its stored images remain available', function () {
     Storage::fake('local');
     Storage::fake('public');
 
     $seller = User::factory()->create();
-    $product = Product::factory()->for($seller, 'seller')->create([
-        'title' => 'Deletable Item',
+    $product = Product::factory()->for($seller, 'seller')->approved()->create([
+        'title' => 'Archivable Item',
     ]);
 
     $paths = [
@@ -541,26 +587,29 @@ test('a seller can delete a listing without order history and its stored images 
 
     $this->actingAs($seller)->delete(route('seller.products.destroy', $product))
         ->assertRedirect(route('seller.products.index'))
-        ->assertSessionHas('status', 'Listing deleted.');
+        ->assertSessionHas('status', 'Listing archived.')
+        ->assertSessionHas('status_key', 'listing_archived');
 
-    expect(Product::query()->find($product->id))->toBeNull();
-    expect(ProductImage::query()->whereIn('path', $paths)->exists())->toBeFalse();
+    $product->refresh();
+
+    expect($product->archived_at)->not->toBeNull()
+        ->and($product->status)->toBe(Product::STATUS_APPROVED)
+        ->and($product->images()->whereIn('path', $paths)->count())->toBe(2);
 
     foreach ($paths as $path) {
-        Storage::disk('local')->assertMissing($path);
+        Storage::disk('local')->assertExists($path);
     }
+
+    Storage::disk('public')->assertEmpty();
+
+    $this->get(route('products.show', $product->slug))->assertNotFound();
 });
 
-test('a listing with order history cannot be deleted', function () {
-    Storage::fake('local');
-
+test('a seller can archive a listing with order history and the order remains intact', function () {
     $seller = User::factory()->create();
-    $product = Product::factory()->for($seller, 'seller')->create([
+    $product = Product::factory()->for($seller, 'seller')->approved()->create([
         'title' => 'Sold Item',
     ]);
-    $path = 'seller-products/'.$seller->id.'/sold.jpg';
-    $image = ProductImage::factory()->for($product, 'product')->create(['path' => $path]);
-    Storage::disk('local')->put($path, 'image-contents');
 
     $order = Order::factory()->for(User::factory()->create(), 'buyer')->create();
     $orderItem = OrderItem::factory()
@@ -569,11 +618,26 @@ test('a listing with order history cannot be deleted', function () {
         ->create();
 
     $this->actingAs($seller)->delete(route('seller.products.destroy', $product))
-        ->assertRedirect()
-        ->assertSessionHas('error', 'This listing cannot be deleted because it has order history.');
+        ->assertRedirect(route('seller.products.index'))
+        ->assertSessionHas('status', 'Listing archived.')
+        ->assertSessionHas('status_key', 'listing_archived');
 
-    expect(Product::query()->findOrFail($product->id)->title)->toBe('Sold Item');
-    expect(ProductImage::query()->findOrFail($image->id)->path)->toBe($path);
-    expect(OrderItem::query()->findOrFail($orderItem->id)->product_id)->toBe($product->id);
-    Storage::disk('local')->assertExists($path);
+    $product->refresh();
+
+    expect($product->archived_at)->not->toBeNull()
+        ->and($product->status)->toBe(Product::STATUS_APPROVED)
+        ->and($orderItem->fresh()->product_id)->toBe($product->id);
+});
+
+test('a seller cannot archive the same listing twice', function () {
+    $seller = User::factory()->create();
+    $product = Product::factory()->for($seller, 'seller')->archived()->create([
+        'title' => 'Already Archived Item',
+    ]);
+
+    $this->actingAs($seller)->delete(route('seller.products.destroy', $product))
+        ->assertRedirect()
+        ->assertSessionHas('error', 'This listing is already archived.');
+
+    expect($product->fresh()->archived_at)->not->toBeNull();
 });

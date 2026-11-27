@@ -6,6 +6,7 @@
             <x-nav-link href="{{ route('my-account') }}" :active="request()->routeIs('my-account', 'orders.*', 'seller.orders.*', 'seller.products.index', 'seller.products.show', 'seller.products.edit')">{{ __('My Account') }}</x-nav-link>
             @can('moderateProducts')
                 <x-nav-link href="{{ route('admin.products.index') }}" :active="request()->routeIs('admin.products.*')">{{ __('Moderation') }}</x-nav-link>
+                <x-nav-link href="{{ route('admin.sellers.index') }}" :active="request()->routeIs('admin.sellers.*')">{{ __('Sellers') }}</x-nav-link>
                 <x-nav-link href="{{ route('admin.promotions.index') }}" :active="request()->routeIs('admin.promotions.*')">{{ __('Promotion payments') }}</x-nav-link>
             @endcan
             <x-nav-link href="{{ route('seller.products.create') }}" :active="request()->routeIs('seller.products.create')" tone="button">{{ __('Sell an item') }}</x-nav-link>

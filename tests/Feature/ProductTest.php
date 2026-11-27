@@ -44,3 +44,13 @@ test('listing status scopes return only their status', function (string $scope, 
     'pending' => ['pending', Product::STATUS_PENDING],
     'rejected' => ['rejected', Product::STATUS_REJECTED],
 ]);
+
+test('public visibility scopes exclude archived approved products', function () {
+    $visible = Product::factory()->approved()->create(['title' => 'Visible Lamp']);
+    $archived = Product::factory()->approved()->archived()->create(['title' => 'Archived Lamp']);
+
+    expect(Product::publiclyVisible()->pluck('id')->all())->toBe([$visible->id])
+        ->and(Product::availableForPurchase()->pluck('id')->all())->toBe([$visible->id])
+        ->and($archived->isArchived())->toBeTrue()
+        ->and($visible->isArchived())->toBeFalse();
+});

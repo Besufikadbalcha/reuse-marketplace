@@ -46,4 +46,18 @@ class ProductFactory extends Factory
             'rejection_reason' => fake()->sentence(),
         ]);
     }
+
+    public function archived(): static
+    {
+        return $this->state(fn (array $attributes): array => [
+            'archived_at' => now(),
+        ]);
+    }
+
+    public function sellerArchived(): static
+    {
+        return $this->state(fn (array $attributes): array => [
+            'seller_archived_at' => now(),
+        ]);
+    }
 }

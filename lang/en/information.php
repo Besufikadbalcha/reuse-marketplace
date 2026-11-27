@@ -41,13 +41,13 @@ return [
                 'icon' => 'truck',
             ],
             'confirm' => [
-                'title' => 'Confirm the order',
-                'body' => 'The seller confirms the item for the order. You can follow the status in your order details at any time.',
+                'title' => 'Confirm and prepare the order',
+                'body' => 'The seller confirms the order and prepares it for pickup or delivery. You can follow the status in your order details at any time.',
                 'icon' => 'check',
             ],
             'complete' => [
-                'title' => 'Complete the exchange',
-                'body' => 'When the item has been handed over, the seller marks it complete. The order then shows as completed.',
+                'title' => 'Confirm receipt and complete',
+                'body' => 'At handover, the seller records cash received. After that, you confirm in your order that you received the item. Once you confirm receipt, the seller can mark the item complete and the order is completed.',
                 'icon' => 'flag',
             ],
         ],

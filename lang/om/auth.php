@@ -13,6 +13,7 @@ return [
     |
     */
 
+    'archived' => 'Akkaunti kun dhokateera.',
     'failed' => 'Odoota galteen keessan galii keenyatti hin walqixxaatu.',
     'password' => 'Jecha darbii dhiyeessitten sirrii miti.',
     'throttle' => "Yaaliin galii hedduu ta'ee jira. Maaloo :seconds sekondii booda irra deebi'aa yaalaa.",

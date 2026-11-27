@@ -14,7 +14,7 @@ test('defaults to English with a left-to-right document and a locale switcher', 
         ->assertSee('lang="en"', false)
         ->assertSee('dir="ltr"', false)
         ->assertSee(route('locale.update'), false)
-        ->assertSee('Find something worth keeping');
+        ->assertSee('Pre-loved finds, ready for you');
 });
 
 test('language switcher appears exactly once on public, guest, and authenticated pages', function () {
@@ -41,8 +41,8 @@ test('renders the interface in a supported session locale', function (string $lo
         ->assertSee('dir="ltr"', false)
         ->assertSee($heading);
 })->with([
-    'Amharic' => ['am', 'ሊያቆዩት የሚገባ ነገር ያግኙ'],
-    'Afaan Oromoo' => ['om', 'Wanta qabaa\'uu danda\'u argattu'],
+    'Amharic' => ['am', 'ሁለተኛ እጅ እቃዎች፣ ለእርስዎ ዝግጁ'],
+    'Afaan Oromoo' => ['om', 'Meeshaalee darbii, siif qophii'],
 ]);
 
 test('renders the interface from an encrypted locale cookie when no session preference exists', function () {
@@ -50,7 +50,7 @@ test('renders the interface from an encrypted locale cookie when no session pref
         ->get(route('home'))
         ->assertOk()
         ->assertSee('lang="om"', false)
-        ->assertSee('Wanta qabaa\'uu danda\'u argattu');
+        ->assertSee('Meeshaalee darbii, siif qophii');
 });
 
 test('the language switcher persists the locale in the session and an encrypted cookie', function () {
@@ -74,7 +74,7 @@ test('session preference takes precedence over a cookie preference', function ()
         ->get(route('home'))
         ->assertOk()
         ->assertSee('lang="am"', false)
-        ->assertSee('ሊያቆዩት የሚገባ ነገር ያግኙ');
+        ->assertSee('ሁለተኛ እጅ እቃዎች፣ ለእርስዎ ዝግጁ');
 });
 
 test('an unsupported locale is rejected without changing the active locale', function () {
@@ -85,7 +85,7 @@ test('an unsupported locale is rejected without changing the active locale', fun
 
     $this->get(route('home'))
         ->assertOk()
-        ->assertSee('ሊያቆዩት የሚገባ ነገር ያግኙ');
+        ->assertSee('ሁለተኛ እጅ እቃዎች፣ ለእርስዎ ዝግጁ');
 });
 
 test('framework validation messages use the active locale', function () {
@@ -194,6 +194,90 @@ test('order confirmation uses a translated status and a stable status key', func
         ->assertOk()
         ->assertSee('አመሰግናለሁ። ትዕዛዝዎ ተቀመጠ።');
 });
+
+test('all supported locales define the smart search interface keys', function () {
+    $keys = [
+        'Default order',
+        'Latest',
+        'Most relevant',
+        'No suggestions',
+        'Search suggestions',
+        'Try fewer words or check the spelling.',
+    ];
+
+    foreach (['en', 'am', 'om'] as $locale) {
+        $translations = json_decode((string) file_get_contents(lang_path($locale.'.json')), true, 512, JSON_THROW_ON_ERROR);
+
+        expect($translations)->toHaveKeys($keys);
+    }
+});
+
+test('all supported locales define the admin moderation filter keys', function () {
+    $keys = [
+        'All',
+        'Listing date',
+        'No listings match your filters.',
+        'Review listings and manage their moderation status.',
+        'Search listings',
+        'Sold',
+    ];
+
+    foreach (['en', 'am', 'om'] as $locale) {
+        $translations = json_decode((string) file_get_contents(lang_path($locale.'.json')), true, 512, JSON_THROW_ON_ERROR);
+
+        expect($translations)->toHaveKeys($keys);
+    }
+});
+
+test('all supported locales define the archive and restore keys', function () {
+    $keys = [
+        'Archive',
+        'Archive listing',
+        'Archive this listing?',
+        'Archived',
+        'Listing archived.',
+        'Listing :title deleted.',
+        'Listing :title restored.',
+        'Only archived listings can be restored.',
+        'Only pending or approved listings can be deleted.',
+        'Restore',
+        'Restore listing',
+        'Restore this listing before reviewing it.',
+        'This listing is already archived.',
+        'This listing is archived and hidden from the public catalog.',
+        'This listing is archived. Payment approval is blocked until the listing is restored.',
+    ];
+
+    foreach (['en', 'am', 'om'] as $locale) {
+        $translations = json_decode((string) file_get_contents(lang_path($locale.'.json')), true, 512, JSON_THROW_ON_ERROR);
+
+        expect($translations)->toHaveKeys($keys);
+    }
+});
+
+test('all supported locales define the seller product promotion action key', function () {
+    $keys = [
+        'Promote This Item',
+    ];
+
+    foreach (['en', 'am', 'om'] as $locale) {
+        $translations = json_decode((string) file_get_contents(lang_path($locale.'.json')), true, 512, JSON_THROW_ON_ERROR);
+
+        expect($translations)->toHaveKeys($keys);
+    }
+});
+
+test('smart search controls and empty suggestions use the active locale', function (string $locale, string $defaultOrder, string $noSuggestions) {
+    $this->withSession(['locale' => $locale])
+        ->get(route('home'))
+        ->assertOk()
+        ->assertSee($defaultOrder)
+        ->assertSee($noSuggestions);
+})->with([
+    'English' => ['en', 'Default order', 'No suggestions'],
+    'Amharic' => ['am', 'ነባሪ ዝርዝር', 'ምንም ጥቆማዎች የሉም።'],
+    'Afaan Oromoo' => ['om', 'Indaa jalqabaa', 'Yaanni hin jiru.'],
+]);
 
 test('changing locale preserves the selected theme', function () {
     $response = $this->from(route('home'))

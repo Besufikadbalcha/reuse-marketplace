@@ -29,6 +29,7 @@ class ResubmitPromotionPaymentRequest extends FormRequest
                 ->whereKey($promotion->product_id)
                 ->where('seller_id', $user->id)
                 ->where('status', Product::STATUS_APPROVED)
+                ->notArchived()
                 ->exists()
             && $promotion->status === ProductPromotion::STATUS_PAYMENT_REJECTED
             && $latestSubmission?->isRejected() === true;

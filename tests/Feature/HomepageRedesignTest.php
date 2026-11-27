@@ -10,7 +10,7 @@ test('guest homepage presents the marketplace landing sections', function () {
 
     $response->assertOk()
         ->assertViewIs('products.index')
-        ->assertSee('Buy and Sell Pre-Loved Items with Confidence')
+        ->assertSee('Pre-loved finds, ready for you')
         ->assertSee('Browse products')
         ->assertSee('Sell an item')
         ->assertSee('Browse by category')
@@ -21,9 +21,9 @@ test('guest homepage presents the marketplace landing sections', function () {
         ->assertSee('All products')
         ->assertSee('href="#all-products"', false)
         ->assertSee('How It Works')
-        ->assertSee('Arrange fulfillment')
-        ->assertSee('Receive your item')
-        ->assertSee('About Reuse Marketplace')
+        ->assertDontSee('Arrange fulfillment')
+        ->assertDontSee('Receive your item')
+        ->assertDontSee('About Reuse Marketplace')
         ->assertDontSee('Latest Products')
         ->assertDontSee('href="'.route('home').'#all-products"', false)
         ->assertSee('href="'.route('seller.products.create').'"', false)
@@ -68,40 +68,38 @@ test('responsive layout uses flexible containers grids and viewport-safe navigat
         ->assertOk()
         ->assertSee('w-full max-w-[96rem] min-w-0', false)
         ->assertSee('sm:px-6 lg:px-8', false)
-        ->assertSee('lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]', false)
+        ->assertDontSee('lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]', false)
         ->assertDontSee('lg:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]', false)
-        ->assertSee('lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]', false)
+        ->assertDontSee('lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]', false)
         ->assertSee('absolute inset-x-4 top-full', false)
         ->assertSee('sm:inset-x-6', false)
         ->assertSee('max-h-[calc(100dvh-7rem)]', false)
         ->assertSee('data-desktop-logout', false)
         ->assertSee('px-2 py-1 text-xs', false)
-        ->assertSee('grid w-full min-w-0 grid-cols-2 gap-2 sm:w-auto sm:flex-none lg:shrink-0', false)
+        ->assertSee('w-full min-w-max whitespace-nowrap px-5 py-3 sm:w-auto', false)
         ->assertSee('mt-2 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4', false);
 });
 
 test('homepage compacts the hero and catalog while keeping the promotion board', function () {
     $category = Category::factory()->create();
-    Product::factory()->for($category, 'category')->approved()->create();
+    $product = Product::factory()->for($category, 'category')->approved()->create();
+    ProductImage::factory()->for($product)->create();
 
     $this->get(route('home'))
         ->assertOk()
         ->assertSee('px-4 py-2.5 sm:px-6 lg:px-8', false)
         ->assertSee('px-4 py-5 sm:px-6 sm:py-3 lg:px-8', false)
-        ->assertSee('relative min-h-0 min-w-0', false)
-        ->assertSee('mt-2 text-4xl font-semibold tracking-tight text-forest-950 dark:text-white sm:text-5xl', false)
-        ->assertSee('mt-2 max-w-xl text-base leading-6 text-forest-700 dark:text-mint-100/80', false)
-        ->assertSee('px-4 py-2.5 text-sm font-semibold text-white', false)
-        ->assertSee('h-60', false)
-        ->assertSee('sm:h-64', false)
-        ->assertSee('lg:h-64', false)
+        ->assertSee('text-2xl font-semibold tracking-tight text-forest-950 dark:text-white sm:text-3xl', false)
+        ->assertSee('mt-1 text-sm text-forest-700 dark:text-mint-100/75', false)
+        ->assertSee('relative h-60 touch-pan-y select-none overflow-hidden rounded-3xl bg-sage-100 dark:bg-forest-900 sm:h-64 lg:h-64', false)
+        ->assertSee('class="relative block h-full w-64 shrink-0 overflow-hidden focus-ring"', false)
         ->assertSee('id="home-categories" class="mt-2', false)
         ->assertSee('id="all-products" class="mt-2', false)
-        ->assertSee('flex min-w-0 max-w-full flex-wrap items-end gap-x-2 gap-y-2', false)
-        ->assertSee('lg:flex-nowrap', false)
-        ->assertSee('lg:grow-2', false)
-        ->assertSee('aspect-[4/3]', false)
-        ->assertSee('flex flex-1 flex-col gap-2 p-4', false);
+        ->assertSee('flex min-w-0 max-w-full flex-wrap items-end gap-x-3 gap-y-3', false)
+        ->assertSee('lg:grid lg:grid-cols-[minmax(8rem,1.5fr)_minmax(7rem,1.2fr)_minmax(6rem,1fr)_minmax(6rem,1fr)_minmax(4rem,0.7fr)_minmax(4rem,0.7fr)_minmax(7rem,1fr)_auto_auto]', false)
+        ->assertSee('lg:col-span-2', false)
+        ->assertSee('aspect-[16/11]', false)
+        ->assertSee('flex flex-1 flex-col gap-1 p-3', false);
 });
 
 test('homepage filter controls keep responsive breakpoints for narrow and wide screens', function (string $classes) {
@@ -110,25 +108,31 @@ test('homepage filter controls keep responsive breakpoints for narrow and wide s
 
     $this->get(route('home'))
         ->assertOk()
-        ->assertSee($classes, false);
+        ->assertSee($classes, false)
+        ->assertSee('<select id="filter-sort" name="sort"', false);
 })->with([
     '320px' => ['flex min-w-0 max-w-full flex-wrap items-end'],
     '375px' => ['grid min-w-0 grid-cols-2 gap-2'],
     '768px' => ['sm:flex-1'],
-    '1024px' => ['lg:flex-nowrap'],
-    '1440px' => ['lg:grow-2'],
+    '1024px' => ['lg:grid lg:grid-cols-[minmax(8rem,1.5fr)_minmax(7rem,1.2fr)_minmax(6rem,1fr)_minmax(6rem,1fr)_minmax(4rem,0.7fr)_minmax(4rem,0.7fr)_minmax(7rem,1fr)_auto_auto]'],
+    '1440px' => ['w-full min-w-max whitespace-nowrap px-5 py-3 sm:w-auto'],
 ]);
 
 test('hero scales compactly across key viewport widths', function (string $classes) {
+    $category = Category::factory()->create();
+    $product = Product::factory()->for($category, 'category')->approved()->create();
+    ProductImage::factory()->for($product)->create();
+
     $this->get(route('home'))
         ->assertOk()
         ->assertSee($classes, false);
 })->with([
-    '320px' => ['grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]'],
+    '320px' => ['flex flex-wrap items-end justify-between gap-2'],
     '375px' => ['h-60'],
     '768px' => ['sm:h-64'],
     '1024px' => ['lg:h-64'],
-    '1440px' => ['sm:text-5xl'],
+    '1280px' => ['w-64'],
+    '1440px' => ['sm:text-3xl'],
 ]);
 
 test('desktop hero leaves at least half of the first product row visible', function (): void {
@@ -139,16 +143,14 @@ test('desktop hero leaves at least half of the first product row visible', funct
     $html = (string) $this->get(route('home'))->assertOk()->getContent();
 
     expect($html)
-        ->toContain('grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]')
-        ->toContain('relative min-h-0 min-w-0 overflow-hidden')
-        ->toContain('relative h-60 overflow-hidden rounded-3xl bg-sage-100 dark:bg-forest-900 sm:h-64 lg:h-64')
+        ->toContain('text-2xl font-semibold tracking-tight text-forest-950 dark:text-white sm:text-3xl')
+        ->toContain('relative h-60 touch-pan-y select-none overflow-hidden rounded-3xl bg-sage-100 dark:bg-forest-900 sm:h-64 lg:h-64')
         ->toContain('id="home-categories" class="mt-2')
         ->toContain('id="all-products" class="mt-2')
-        ->toContain('mt-2 flex flex-wrap items-end justify-between')
         ->toContain('mt-2 grid grid-cols-1')
         ->toContain('leading-none tracking-widest');
 
-    $heroHeight = 256 + 24 + 24 + 8 + 32;
+    $heroHeight = 112 + 24 + 24 + 8 + 32;
     $rowStart = 56 + 12 + $heroHeight + 8 + 48 + 8 + 4 + 65 + 8 + 47 + 8;
 
     expect(768 - $rowStart)->toBeGreaterThanOrEqual(160);
@@ -205,13 +207,12 @@ test('homepage places full product browsing directly below the category chips', 
 
     $categoriesPosition = strpos($content, 'id="home-categories"');
     $productsPosition = strpos($content, 'id="all-products"');
-    $howPosition = strpos($content, 'id="home-how"');
 
     expect($categoriesPosition)->not->toBeFalse()
         ->and($productsPosition)->not->toBeFalse()
-        ->and($howPosition)->not->toBeFalse()
         ->and($categoriesPosition)->toBeLessThan($productsPosition)
-        ->and($productsPosition)->toBeLessThan($howPosition);
+        ->and($content)->not->toContain('id="home-how"')
+        ->and($content)->not->toContain('id="home-about"');
 
     $response
         ->assertSee('Landing Item 5')
@@ -250,7 +251,7 @@ test('category pages keep the archive heading and filters without the landing he
         ->assertViewIs('products.index')
         ->assertSee('Two wheel finds.')
         ->assertSee('action="'.route('categories.show', $category).'"', false)
-        ->assertDontSee('Buy and Sell Pre-Loved Items with Confidence')
+        ->assertDontSee('Pre-loved finds, ready for you')
         ->assertDontSee('Shop by Category');
 });
 
@@ -258,7 +259,7 @@ test('filtered home pages keep catalog behavior instead of the landing hero', fu
     $this->get(route('home', $filters))
         ->assertOk()
         ->assertViewIs('products.index')
-        ->assertDontSee('Buy and Sell Pre-Loved Items with Confidence')
+        ->assertDontSee('Pre-loved finds, ready for you')
         ->assertDontSee('Shop by Category')
         ->assertDontSee('id="all-products-heading"', false)
         ->assertDontSee('Filter approved listings by category, condition, price, or search term.');
@@ -351,19 +352,18 @@ test('administrators retain moderation access in the redesigned homepage navigat
         ->assertSee(route('admin.products.index'), false);
 });
 
-test('homepage landing copy is translated in each supported locale', function (string $locale, string $heading, string $categoriesHeading, string $categoriesDescription, string $howHeading) {
+test('homepage landing copy is translated in each supported locale', function (string $locale, string $heading, string $categoriesHeading, string $categoriesDescription) {
     $this->withSession(['locale' => $locale])
         ->get(route('home'))
         ->assertOk()
         ->assertSee('lang="'.$locale.'"', false)
         ->assertSee($heading)
         ->assertDontSee($categoriesHeading)
-        ->assertDontSee($categoriesDescription)
-        ->assertSee($howHeading);
+        ->assertDontSee($categoriesDescription);
 })->with([
-    'English' => ['en', 'Buy and Sell Pre-Loved Items with Confidence', 'Shop by Category', 'Explore active categories and find approved listings that match what you need.', 'How It Works'],
-    'Amharic' => ['am', 'ከቅድሚያ ጥቅም ላይ የዋሉ እቃዎችን በልበ ሙሉነት ግዛና ሽጥ', 'በምድብ ያስሱ', 'ንቁ ምድቦችን ያስሱና ለፍላጎትዎ የሚስማሙ የጸደቁ ማስታወቂያዎችን ያግኙ።', 'እንዴት እንደሚሰራ'],
-    'Afaan Oromoo' => ['om', 'Meeshaalee darbii itti fayyadamaa amanaa’aan bitaa fi gurgurtaa', 'Kutaalee ilaali', 'Kutaalee cimaa ilaali fi dubbisaalee eeyyaman barbaade keessatti argattu.', 'Akka hojjetu'],
+    'English' => ['en', 'Pre-loved finds, ready for you', 'Shop by Category', 'Explore active categories and find approved listings that match what you need.'],
+    'Amharic' => ['am', 'ሁለተኛ እጅ እቃዎች፣ ለእርስዎ ዝግጁ', 'በምድብ ያስሱ', 'ንቁ ምድቦችን ያስሱና ለፍላጎትዎ የሚስማሙ የጸደቁ ማስታወቂያዎችን ያግኙ።'],
+    'Afaan Oromoo' => ['om', 'Meeshaalee darbii, siif qophii', 'Kutaalee ilaali', 'Kutaalee cimaa ilaali fi dubbisaalee eeyyaman barbaade keessatti argattu.'],
 ]);
 
 test('homepage translation files keep the same keys in every locale', function () {

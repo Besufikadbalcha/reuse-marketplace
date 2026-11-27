@@ -52,4 +52,11 @@ class UserFactory extends Factory
             'is_admin' => true,
         ]);
     }
+
+    public function archived(): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'archived_at' => now(),
+        ]);
+    }
 }

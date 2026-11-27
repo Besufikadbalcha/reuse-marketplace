@@ -24,7 +24,7 @@ class AdminPromotionController extends Controller
             ->whereHas('paymentSubmissions', fn ($query) => $query->pending())
             ->with([
                 'seller:id,name',
-                'product:id,title,slug,status,seller_id',
+                'product:id,title,slug,status,seller_id,archived_at,seller_archived_at',
                 'package:id,code,name',
                 'paymentSubmissions' => fn (HasMany $query) => $query->pending()->latestFirst(),
             ])
@@ -39,7 +39,7 @@ class AdminPromotionController extends Controller
     {
         $promotion->load([
             'seller:id,name',
-            'product:id,title,slug,status,seller_id',
+            'product:id,title,slug,status,seller_id,archived_at,seller_archived_at',
             'package:id,code,name',
             'paymentSubmissions' => fn (HasMany $query) => $query
                 ->with('reviewer:id,name')
@@ -216,6 +216,7 @@ class AdminPromotionController extends Controller
             ->whereKey($promotion->product_id)
             ->where('seller_id', $promotion->seller_id)
             ->where('status', Product::STATUS_APPROVED)
+            ->notArchived()
             ->exists();
     }
 
@@ -227,6 +228,9 @@ class AdminPromotionController extends Controller
 
     private function productIsApproved(Product $product): bool
     {
-        return $product->status === Product::STATUS_APPROVED;
+        return $product->status === Product::STATUS_APPROVED
+            && ! $product->isArchived()
+            && ! $product->isSellerArchived()
+            && $product->seller()->whereNull('archived_at')->exists();
     }
 }

@@ -10,6 +10,24 @@ use Illuminate\Validation\Validator;
 
 class ProductIndexRequest extends FormRequest
 {
+    public const SORT_LATEST = 'latest';
+
+    public const SORT_RELEVANCE = 'relevance';
+
+    public const SORT_TITLE_ASC = 'title_asc';
+
+    public const SORT_PRICE_ASC = 'price_asc';
+
+    public const SORT_PRICE_DESC = 'price_desc';
+
+    public const SORTS = [
+        self::SORT_LATEST,
+        self::SORT_RELEVANCE,
+        self::SORT_TITLE_ASC,
+        self::SORT_PRICE_ASC,
+        self::SORT_PRICE_DESC,
+    ];
+
     public function authorize(): bool
     {
         return true;
@@ -17,12 +35,16 @@ class ProductIndexRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        foreach (['q', 'location'] as $field) {
-            $value = $this->input($field);
+        $search = $this->input('q');
 
-            if (is_string($value)) {
-                $this->merge([$field => trim($value)]);
-            }
+        if (is_string($search)) {
+            $this->merge(['q' => $this->normalizeSearch($search)]);
+        }
+
+        $location = $this->input('location');
+
+        if (is_string($location)) {
+            $this->merge(['location' => trim($location)]);
         }
 
         foreach (['min_price', 'max_price'] as $field) {
@@ -34,6 +56,13 @@ class ProductIndexRequest extends FormRequest
                 $this->merge([$field => $trimmedValue === '' ? null : $trimmedValue]);
             }
         }
+    }
+
+    public function normalizeSearch(string $search): string
+    {
+        $trimmed = preg_replace('/^[\p{Z}\s]+|[\p{Z}\s]+$/u', '', $search) ?? trim($search);
+
+        return preg_replace('/[\p{Z}\s]+/u', ' ', $trimmed) ?? $trimmed;
     }
 
     public function rules(): array
@@ -63,6 +92,7 @@ class ProductIndexRequest extends FormRequest
             ])],
             'min_price' => ['nullable', 'numeric', 'decimal:0,2', 'min:0.01', 'max:1000000'],
             'max_price' => ['nullable', 'numeric', 'decimal:0,2', 'min:0.01', 'max:1000000'],
+            'sort' => ['nullable', 'string', Rule::in(self::SORTS)],
         ];
     }
 

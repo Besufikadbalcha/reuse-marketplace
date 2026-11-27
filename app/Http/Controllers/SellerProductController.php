@@ -9,13 +9,19 @@ use App\Models\Location;
 use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\ProductPromotion;
+use App\Models\User;
+use App\Notifications\ListingResubmittedForReviewNotification;
+use App\Notifications\ListingSubmittedForReviewNotification;
+use App\Notifications\MarketplaceNotification;
 use App\Notifications\PromotionPausedNotification;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -42,18 +48,23 @@ class SellerProductController extends Controller
             ->paginate(12)
             ->withQueryString();
 
-        $openPromotionProductIds = ProductPromotion::query()
+        $promotionsByProductId = ProductPromotion::query()
             ->forSeller((int) $request->user()->id)
-            ->open()
-            ->pluck('product_id')
-            ->map(fn (mixed $productId): int => (int) $productId)
-            ->all();
+            ->whereIn('product_id', $products->pluck('id')->all())
+            ->latest()
+            ->orderByDesc('id')
+            ->get(['id', 'seller_id', 'product_id', 'status', 'created_at'])
+            ->groupBy('product_id')
+            ->map(fn (Collection $promotions): ProductPromotion => $promotions->first(
+                fn (ProductPromotion $promotion): bool => $promotion->isOpen()
+            ) ?? $promotions->first())
+            ->keyBy(fn (ProductPromotion $promotion): int => (int) $promotion->product_id);
 
         return view('seller.products.index', [
             'products' => $products,
             'statuses' => $this->statuses(),
             'status' => $status,
-            'openPromotionProductIds' => $openPromotionProductIds,
+            'promotionsByProductId' => $promotionsByProductId,
         ]);
     }
 
@@ -95,6 +106,8 @@ class SellerProductController extends Controller
             throw $exception;
         }
 
+        $this->notifyActiveAdminsOfListingSubmission($product, ListingSubmittedForReviewNotification::class);
+
         return redirect()->route('seller.products.index')
             ->with('status', __('Listing submitted for review.'))
             ->with('status_key', 'listing_submitted');
@@ -110,7 +123,17 @@ class SellerProductController extends Controller
             'images' => fn (HasMany $query) => $query->orderBy('sort_order')->orderBy('id'),
         ]);
 
-        return view('seller.products.show', ['product' => $product]);
+        $promotion = $this->promotionForProduct($product);
+        $promotionIsOpen = $promotion?->isOpen() ?? false;
+
+        return view('seller.products.show', [
+            'product' => $product,
+            'promotion' => $promotion,
+            'promotionIsOpen' => $promotionIsOpen,
+            'canRequestPromotion' => $product->status === Product::STATUS_APPROVED
+                && Product::query()->whereKey($product->id)->notArchived()->exists()
+                && ! $promotionIsOpen,
+        ]);
     }
 
     public function edit(Request $request, Product $product): View
@@ -261,6 +284,10 @@ class SellerProductController extends Controller
 
         $resubmitted = in_array($previousStatus, [Product::STATUS_APPROVED, Product::STATUS_REJECTED], true);
 
+        if ($resubmitted && $product->fresh()?->status === Product::STATUS_PENDING) {
+            $this->notifyActiveAdminsOfListingSubmission($product, ListingResubmittedForReviewNotification::class);
+        }
+
         return redirect()->route('seller.products.show', $product)
             ->with('status', $resubmitted ? __('Listing updated and submitted for review.') : __('Listing updated.'))
             ->with('status_key', $resubmitted ? 'listing_updated_submitted' : 'listing_updated');
@@ -270,26 +297,39 @@ class SellerProductController extends Controller
     {
         $this->authorizeOwnership($request, $product);
 
-        if ($product->orderItems()->exists()) {
-            return back()->with('error', __('This listing cannot be deleted because it has order history.'));
+        if ($product->isArchived()) {
+            return back()->with('error', __('This listing is already archived.'));
         }
 
-        $imagePaths = $product->images()->pluck('path')->all();
+        $updated = Product::query()
+            ->whereKey($product->id)
+            ->whereNull('archived_at')
+            ->update(['archived_at' => now()]);
 
-        DB::transaction(fn () => $product->delete());
-
-        foreach ($imagePaths as $path) {
-            $this->deleteImageFile($path);
+        if ($updated !== 1) {
+            return back()->with('error', __('This listing is already archived.'));
         }
 
         return redirect()->route('seller.products.index')
-            ->with('status', __('Listing deleted.'))
-            ->with('status_key', 'listing_deleted');
+            ->with('status', __('Listing archived.'))
+            ->with('status_key', 'listing_archived');
     }
 
     private function authorizeOwnership(Request $request, Product $product): void
     {
         abort_unless($product->seller_id === $request->user()->id, 404);
+    }
+
+    private function promotionForProduct(Product $product): ?ProductPromotion
+    {
+        $promotions = ProductPromotion::query()
+            ->forProduct((int) $product->id)
+            ->latest()
+            ->orderByDesc('id')
+            ->get();
+
+        return $promotions->first(fn (ProductPromotion $promotion): bool => $promotion->isOpen())
+            ?? $promotions->first();
     }
 
     /**
@@ -363,6 +403,41 @@ class SellerProductController extends Controller
             Product::CONDITION_GOOD => __('Good'),
             Product::CONDITION_FAIR => __('Fair'),
         ];
+    }
+
+    /**
+     * @param  class-string<ListingSubmittedForReviewNotification|ListingResubmittedForReviewNotification>  $notificationClass
+     */
+    private function notifyActiveAdminsOfListingSubmission(Product $product, string $notificationClass): void
+    {
+        if (! MarketplaceNotification::databaseTableExists()) {
+            return;
+        }
+
+        $admins = User::query()
+            ->activeAdmins()
+            ->whereKeyNot($product->seller_id)
+            ->get();
+
+        if ($admins->isEmpty()) {
+            return;
+        }
+
+        $notificationTypes = [
+            ListingSubmittedForReviewNotification::class,
+            ListingResubmittedForReviewNotification::class,
+        ];
+
+        $recipients = $admins->filter(fn (User $admin): bool => ! $admin->unreadNotifications()
+            ->whereIn('type', $notificationTypes)
+            ->where('data->params->product_id', $product->id)
+            ->exists());
+
+        if ($recipients->isEmpty()) {
+            return;
+        }
+
+        Notification::send($recipients, new $notificationClass($product));
     }
 
     /**

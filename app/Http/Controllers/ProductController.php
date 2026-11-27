@@ -12,6 +12,7 @@ use App\Models\PromotionPackage;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Collection;
 use Illuminate\View\View;
 
 class ProductController extends Controller
@@ -63,6 +64,12 @@ class ProductController extends Controller
                 'images' => fn (HasMany $query) => $query->orderBy('sort_order'),
             ])
             ->orderByRaw('CASE WHEN category_id = ? THEN 0 ELSE 1 END', [$product->category_id])
+            ->orderByRaw('CASE WHEN condition = ? THEN 0 WHEN condition = ? THEN 1 WHEN condition = ? THEN 2 WHEN condition = ? THEN 3 ELSE 4 END', [
+                Product::CONDITION_NEW,
+                Product::CONDITION_LIKE_NEW,
+                Product::CONDITION_GOOD,
+                Product::CONDITION_FAIR,
+            ])
             ->orderByRaw('ABS(price_minor - ?)', [$product->price_minor])
             ->orderBy('id')
             ->limit(4)
@@ -143,10 +150,92 @@ class ProductController extends Controller
         return $rotation;
     }
 
+    private function facetCounts(array $filters, bool $locationFilterAvailable, Collection $categories, Collection $locations, ?Category $category): array
+    {
+        $rawCategoryCounts = $category === null
+            ? $this->facetCountByColumn('category_id', 'category', $filters, $locationFilterAvailable)
+            : collect();
+
+        $rawConditionCounts = $this->facetCountByColumn('condition', 'condition', $filters, $locationFilterAvailable);
+        $rawLocationCounts = $this->facetCountByColumn('location_id', 'location', $filters, $locationFilterAvailable);
+
+        return [
+            'categories' => $category === null
+                ? $categories->mapWithKeys(fn (Category $categoryOption): array => [
+                    $categoryOption->id => (int) $rawCategoryCounts->get($categoryOption->id, 0),
+                ])
+                : collect(),
+            'conditions' => collect(self::CONDITIONS)->mapWithKeys(fn (string $label, string $value): array => [
+                $value => (int) $rawConditionCounts->get($value, 0),
+            ]),
+            'locations' => $locations->mapWithKeys(fn (Location $locationOption): array => [
+                $locationOption->id => (int) $rawLocationCounts->get($locationOption->id, 0),
+            ]),
+        ];
+    }
+
+    private function facetCountByColumn(string $column, string $excludedFacet, array $filters, bool $locationFilterAvailable): Collection
+    {
+        $facetFilters = $filters;
+        unset($facetFilters[$excludedFacet]);
+
+        $productsTable = (new Product)->getTable();
+        $groupColumn = $productsTable.'.'.$column;
+
+        return Product::query()
+            ->availableForPurchase()
+            ->when(($filters['q'] ?? '') !== '', fn (Builder $query): Builder => $query->searchTerms((string) $filters['q']))
+            ->catalogFilters($facetFilters, $locationFilterAvailable)
+            ->toBase()
+            ->selectRaw($groupColumn.', count(*) as facet_count')
+            ->groupBy($groupColumn)
+            ->pluck('facet_count', $column);
+    }
+
+    private function effectiveSort(array $filters): string
+    {
+        $sort = (string) ($filters['sort'] ?? '');
+
+        if ($sort === '') {
+            return ($filters['q'] ?? '') !== '' ? ProductIndexRequest::SORT_RELEVANCE : ProductIndexRequest::SORT_LATEST;
+        }
+
+        if ($sort === ProductIndexRequest::SORT_RELEVANCE && ($filters['q'] ?? '') === '') {
+            return ProductIndexRequest::SORT_LATEST;
+        }
+
+        return $sort;
+    }
+
+    private function applyTitleSort(Builder $query): Builder
+    {
+        $productsTable = $query->getModel()->getTable();
+        $titleColumn = $query->getQuery()->getGrammar()->wrap($productsTable.'.title');
+
+        return $query
+            ->orderByRaw('lower('.$titleColumn.') asc')
+            ->orderByDesc($productsTable.'.created_at')
+            ->orderByDesc($productsTable.'.id');
+    }
+
+    private function applySort(Builder $query, array $filters, string $effectiveSort): Builder
+    {
+        if ($effectiveSort === ProductIndexRequest::SORT_RELEVANCE) {
+            return $query->rankBySearchTerms((string) $filters['q']);
+        }
+
+        return match ($effectiveSort) {
+            ProductIndexRequest::SORT_TITLE_ASC => $this->applyTitleSort($query),
+            ProductIndexRequest::SORT_PRICE_ASC => $query->orderBy('price_minor')->orderByDesc('created_at')->orderByDesc('id'),
+            ProductIndexRequest::SORT_PRICE_DESC => $query->orderByDesc('price_minor')->orderByDesc('created_at')->orderByDesc('id'),
+            default => $query->latest()->orderByDesc('id'),
+        };
+    }
+
     private function catalog(ProductIndexRequest $request, ?Category $category = null): View
     {
         $locationFilterAvailable = $request->locationFilterIsAvailable();
-        $validatedFilters = $request->safe()->only(['q', 'category', 'location', 'condition', 'min_price', 'max_price']);
+        $validatedFilters = $request->safe()->only(['q', 'category', 'location', 'condition', 'min_price', 'max_price', 'sort']);
 
         $filters = [
             'q' => $validatedFilters['q'] ?? '',
@@ -155,7 +244,10 @@ class ProductController extends Controller
             'condition' => $validatedFilters['condition'] ?? '',
             'min_price' => $validatedFilters['min_price'] ?? '',
             'max_price' => $validatedFilters['max_price'] ?? '',
+            'sort' => $validatedFilters['sort'] ?? '',
         ];
+
+        $effectiveSort = $this->effectiveSort($filters);
 
         $isLandingPage = $category === null
             && $filters['q'] === ''
@@ -172,20 +264,10 @@ class ProductController extends Controller
                 'seller',
                 'images' => fn (HasMany $query) => $query->orderBy('sort_order'),
             ])
-            ->when($filters['q'] !== '', fn (Builder $query): Builder => $query->search($filters['q']))
-            ->when($filters['category'] !== '', fn (Builder $query): Builder => $query->where('category_id', $filters['category']))
-            ->when($locationFilterAvailable && $filters['location'] !== '', fn (Builder $query): Builder => $query->inLocation($filters['location']))
-            ->when($filters['condition'] !== '', fn (Builder $query): Builder => $query->where('condition', $filters['condition']))
-            ->when(
-                $filters['min_price'] !== '',
-                fn (Builder $query): Builder => $query->where('price_minor', '>=', (int) round(((float) $filters['min_price']) * 100)),
-            )
-            ->when(
-                $filters['max_price'] !== '',
-                fn (Builder $query): Builder => $query->where('price_minor', '<=', (int) round(((float) $filters['max_price']) * 100)),
-            )
-            ->latest()
-            ->orderByDesc('id');
+            ->when($filters['q'] !== '', fn (Builder $query): Builder => $query->searchTerms($filters['q']))
+            ->catalogFilters($filters, $locationFilterAvailable);
+
+        $productsQuery = $this->applySort($productsQuery, $filters, $effectiveSort);
 
         $products = $productsQuery->paginate(12)->withQueryString();
 
@@ -201,6 +283,8 @@ class ProductController extends Controller
                 ->get(['id', 'name'])
             : collect();
 
+        $facetCounts = $this->facetCounts($filters, $locationFilterAvailable, $categories, $locations, $category);
+
         $filterQuery = array_filter([
             'q' => $filters['q'] !== '' ? $filters['q'] : null,
             'category' => $category === null && $filters['category'] !== '' ? $filters['category'] : null,
@@ -208,9 +292,11 @@ class ProductController extends Controller
             'condition' => $filters['condition'] !== '' ? $filters['condition'] : null,
             'min_price' => $filters['min_price'] !== '' ? $filters['min_price'] : null,
             'max_price' => $filters['max_price'] !== '' ? $filters['max_price'] : null,
+            'sort' => $filters['sort'] !== '' && $effectiveSort !== ProductIndexRequest::SORT_LATEST ? $effectiveSort : null,
         ], fn ($value): bool => $value !== null && $value !== '');
 
         $activeFilters = collect($filterQuery)
+            ->except('sort')
             ->map(function (mixed $value, string $key) use ($filterQuery, $categories, $category): array {
                 $remainingFilters = $filterQuery;
                 unset($remainingFilters[$key]);
@@ -254,6 +340,9 @@ class ProductController extends Controller
             'categories' => $categories,
             'locations' => $locations,
             'conditions' => array_map(fn (string $label): string => __($label), self::CONDITIONS),
+            'categoryCounts' => $facetCounts['categories'],
+            'conditionCounts' => $facetCounts['conditions'],
+            'locationCounts' => $facetCounts['locations'],
             'filters' => [
                 'q' => $filters['q'],
                 'category' => $filters['category'],
@@ -261,6 +350,7 @@ class ProductController extends Controller
                 'condition' => $filters['condition'],
                 'min_price' => $filters['min_price'],
                 'max_price' => $filters['max_price'],
+                'sort' => $effectiveSort,
             ],
             'category' => $category,
             'formAction' => $clearFiltersUrl,

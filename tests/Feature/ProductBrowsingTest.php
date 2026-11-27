@@ -6,6 +6,8 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\ProductImage;
+use App\Models\ProductPromotion;
+use App\Models\PromotionPackage;
 use App\Models\User;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -16,6 +18,27 @@ test('guests can browse the public catalog', function () {
         ->assertOk()
         ->assertViewIs('products.index')
         ->assertViewHas('products');
+});
+
+test('homepage product cards show the listing creation date', function () {
+    $this->travelTo('2026-11-25 12:00:00');
+
+    $seller = User::factory()->create(['name' => 'Date Seller']);
+    $category = Category::factory()->create(['name' => 'Date Category', 'is_active' => true]);
+    $product = Product::factory()
+        ->for($seller, 'seller')
+        ->for($category, 'category')
+        ->approved()
+        ->create([
+            'title' => 'Dated Listing',
+            'created_at' => '2026-11-20 08:30:00',
+            'updated_at' => '2026-11-20 08:30:00',
+        ]);
+
+    $this->get(route('home'))
+        ->assertOk()
+        ->assertSee('Dated Listing')
+        ->assertSee(__('Listed: :date', ['date' => Product::formatDate($product->created_at)]), false);
 });
 
 test('catalog only lists approved products in active categories', function () {
@@ -149,19 +172,17 @@ test('public queries exclude unavailable products from catalog category search a
         ->and($available->fresh()->status)->toBe(Product::STATUS_APPROVED);
 });
 
-test('catalog filters stay compact while keeping every field available', function () {
+test('catalog filters keep every field available in a spacious single row', function () {
     $this->get(route('home'))
         ->assertOk()
-        ->assertSee('flex min-w-0 max-w-full flex-wrap items-end gap-x-2 gap-y-2', false)
-        ->assertSee('p-2 shadow-soft', false)
-        ->assertSee('lg:flex-nowrap', false)
-        ->assertSee('w-full min-w-0 sm:w-auto sm:flex-1 lg:basis-0 lg:grow-2', false)
-        ->assertSee('w-full min-w-0 sm:w-auto sm:flex-1 lg:w-28 lg:flex-none', false)
-        ->assertSee('w-full min-w-0 sm:w-auto sm:flex-1 lg:w-32 lg:flex-none', false)
-        ->assertSee('w-full min-w-0 sm:w-auto sm:flex-1 lg:w-44 lg:flex-none', false)
-        ->assertSee('grid w-full min-w-0 grid-cols-2 gap-2 sm:w-auto sm:flex-none lg:shrink-0', false)
-        ->assertSee('flex w-full items-center justify-between gap-2 text-xs', false)
-        ->assertSee('whitespace-nowrap', false)
+        ->assertSee('flex min-w-0 max-w-full flex-wrap items-end gap-x-3 gap-y-3', false)
+        ->assertSee('p-3 shadow-soft', false)
+        ->assertSee('sm:p-3.5', false)
+        ->assertSee('lg:grid lg:grid-cols-[minmax(8rem,1.5fr)_minmax(7rem,1.2fr)_minmax(6rem,1fr)_minmax(6rem,1fr)_minmax(4rem,0.7fr)_minmax(4rem,0.7fr)_minmax(7rem,1fr)_auto_auto]', false)
+        ->assertSee('w-full min-w-0 sm:w-auto sm:flex-1', false)
+        ->assertSee('lg:col-span-2', false)
+        ->assertSee('w-full min-w-max whitespace-nowrap px-5 py-3 sm:w-auto', false)
+        ->assertSee('w-full min-w-max whitespace-nowrap px-4 py-3 text-sm sm:w-auto', false)
         ->assertSee('name="q"', false)
         ->assertSee('name="category"', false)
         ->assertSee('name="location"', false)
@@ -173,28 +194,86 @@ test('catalog filters stay compact while keeping every field available', functio
         ->assertSee('name="condition"', false)
         ->assertSee('name="min_price"', false)
         ->assertSee('name="max_price"', false)
+        ->assertSee('name="sort"', false)
+        ->assertSee('aria-controls="filter-product-suggestions"', false)
+        ->assertSee('id="filter-product-suggestions"', false)
         ->assertSee('grid-cols-2 gap-2', false)
-        ->assertSee('px-3 py-2 text-xs', false)
-        ->assertSee('px-3 py-2 text-sm text-forest-900', false)
+        ->assertSee('px-3 py-3 text-sm text-forest-900', false)
+        ->assertSee('py-3 text-sm text-forest-900', false)
         ->assertSee('px-4 py-2 text-sm', false)
-        ->assertSee('Search')
-        ->assertSee('Category')
-        ->assertSee('All locations')
-        ->assertSee('Location')
-        ->assertSee('Condition')
-        ->assertSee('<span class="sr-only">'.__('Price range').' (ETB)</span>', false)
-        ->assertDontSee('<span>'.__('Price range').' (ETB)</span>', false)
-        ->assertSee('Min price')
-        ->assertSee('Max price')
+        ->assertSee('aria-label="'.__('Price range').' (ETB)"', false)
+        ->assertDontSee('<span class="sr-only">'.__('Price range').' (ETB)</span>', false)
+        ->assertSee('<label class="sr-only" for="q">'.__('Search').'</label>', false)
+        ->assertSee('<label class="sr-only" for="location">'.__('Location').'</label>', false)
+        ->assertSee('<label class="sr-only" for="filter-category">'.__('Category').'</label>', false)
+        ->assertSee('<label class="sr-only" for="filter-condition">'.__('Condition').'</label>', false)
+        ->assertSee('<label class="sr-only" for="min_price">'.__('Min price').'</label>', false)
+        ->assertSee('<label class="sr-only" for="max_price">'.__('Max price').'</label>', false)
+        ->assertSee('<label class="sr-only" for="filter-sort">'.__('Sort by').'</label>', false)
+        ->assertSee(__('No suggestions'))
+        ->assertDontSee('<label for="q" class="block', false)
+        ->assertDontSee('<label for="location" class="block', false)
+        ->assertDontSee('<label for="filter-category" class="block', false)
+        ->assertDontSee('<label for="filter-condition" class="block', false)
+        ->assertSee('placeholder="'.__('Search products...').'"', false)
+        ->assertSee('placeholder="'.__('Location').'"', false)
+        ->assertSee('placeholder="'.__('Min price').'"', false)
+        ->assertSee('placeholder="'.__('Max price').'"', false)
+        ->assertSee('<option value="">'.__('All categories').'</option>', false)
+        ->assertSee('<option value="">'.__('All conditions').'</option>', false)
         ->assertDontSee('id="all-products-heading"', false)
         ->assertDontSee('Filter approved listings by category, condition, price, or search term.');
+});
+
+test('filter controls stay in one ordered row with both buttons beside each other', function () {
+    $previousInternalErrors = libxml_use_internal_errors(true);
+    $document = new DOMDocument;
+    $document->loadHTML((string) $this->get(route('home'))->assertOk()->getContent());
+    libxml_clear_errors();
+    libxml_use_internal_errors($previousInternalErrors);
+
+    $form = collect(iterator_to_array($document->getElementsByTagName('form')))
+        ->first(fn (DOMElement $candidate): bool => $candidate->getAttribute('method') === 'GET');
+
+    expect($form)->not->toBeNull();
+
+    $descriptors = collect(iterator_to_array($form->childNodes))
+        ->filter(fn (DOMNode $node): bool => $node instanceof DOMElement)
+        ->map(function (DOMElement $node): string {
+            $inputs = $node->getElementsByTagName('input');
+
+            if ($inputs->length > 1) {
+                return 'min_price,max_price';
+            }
+
+            $control = $inputs->item(0) ?? $node->getElementsByTagName('select')->item(0);
+
+            if ($control instanceof DOMElement) {
+                return $control->getAttribute('name');
+            }
+
+            return trim($node->textContent);
+        })
+        ->values()
+        ->all();
+
+    expect($descriptors)->toBe([
+        'q',
+        'location',
+        'category',
+        'condition',
+        'min_price,max_price',
+        'sort',
+        'Search',
+        'Clear filters',
+    ]);
 });
 
 test('location dropdown stacks above product cards without clipped parents', function () {
     $response = $this->get(route('home'))->assertOk();
 
     $response
-        ->assertSee('class="relative z-20 flex min-w-0 max-w-full flex-wrap items-end gap-x-2 gap-y-2 rounded-2xl border border-white/70 bg-white/65 p-2 shadow-soft backdrop-blur-2xl dark:border-white/10 dark:bg-forest-950/70 lg:flex-nowrap"', false)
+        ->assertSee('class="relative z-20 flex min-w-0 max-w-full flex-wrap items-end gap-x-3 gap-y-3 rounded-2xl border border-white/70 bg-white/65 p-3 shadow-soft backdrop-blur-2xl dark:border-white/10 dark:bg-forest-950/70 lg:grid lg:grid-cols-[minmax(8rem,1.5fr)_minmax(7rem,1.2fr)_minmax(6rem,1fr)_minmax(6rem,1fr)_minmax(4rem,0.7fr)_minmax(4rem,0.7fr)_minmax(7rem,1fr)_auto_auto] sm:p-3.5"', false)
         ->assertSee('class="absolute inset-x-0 top-full z-50 mt-1 max-h-[9.25rem] overflow-y-auto overscroll-contain rounded-xl border border-sage-200 bg-white/95 p-1 shadow-soft backdrop-blur-xl dark:border-white/15 dark:bg-forest-900/95"', false)
         ->assertSee('<div class="mt-1">', false);
 });
@@ -652,6 +731,61 @@ test('unavailable product details remain readable without a buy action', functio
         ->assertDontSee('Log in to buy now');
 });
 
+test('product detail page displays all uploaded images in the gallery', function () {
+    Storage::fake('local');
+
+    $product = Product::factory()->approved()->create(['title' => 'Gallery Listing']);
+    $first = ProductImage::factory()->for($product)->create(['path' => 'seller-products/1/gallery-1.jpg', 'sort_order' => 0]);
+    $second = ProductImage::factory()->for($product)->create(['path' => 'seller-products/1/gallery-2.jpg', 'sort_order' => 1]);
+
+    Storage::disk('local')->put($first->path, 'first');
+    Storage::disk('local')->put($second->path, 'second');
+
+    $this->get(route('products.show', $product->slug))
+        ->assertOk()
+        ->assertSee('data-product-gallery', false)
+        ->assertSee('data-product-gallery-main', false)
+        ->assertSee(route('product-images.show', [$product->id, $first->id]), false)
+        ->assertSee(route('product-images.show', [$product->id, $second->id]), false)
+        ->assertSee('data-product-gallery-thumb', false);
+});
+
+test('product detail page shows the original listing creation date', function () {
+    $this->travelTo('2026-11-27 12:00:00');
+
+    $product = Product::factory()->approved()->create([
+        'title' => 'Dated Detail Listing',
+        'created_at' => '2026-11-20 08:30:00',
+        'updated_at' => '2026-11-26 09:45:00',
+    ]);
+
+    $this->get(route('products.show', $product->slug))
+        ->assertOk()
+        ->assertSee('Dated Detail Listing')
+        ->assertSee(__('Listed: :date', ['date' => Product::formatDate($product->created_at)]), false)
+        ->assertDontSee(__('Listed: :date', ['date' => Product::formatDate($product->updated_at)]), false);
+});
+
+test('clicking a promoted homepage product navigates to the product detail page', function () {
+    $seller = User::factory()->create();
+    $category = Category::factory()->create(['is_active' => true]);
+    $product = Product::factory()->for($seller, 'seller')->for($category)->approved()->create(['title' => 'Clickable Promoted Product']);
+    $image = ProductImage::factory()->for($product)->create(['path' => 'seller-products/'.$seller->id.'/clickable.jpg', 'sort_order' => 0]);
+    Storage::fake('local');
+    Storage::disk('local')->put($image->path, 'img');
+
+    $package = PromotionPackage::factory()->basic()->create();
+    ProductPromotion::factory()->for($product)->for($seller, 'seller')->for($package, 'package')->active()->create([
+        'starts_at' => now()->subMinute(),
+        'ends_at' => now()->addDay(),
+    ]);
+
+    $this->get(route('home'))
+        ->assertOk()
+        ->assertSee('href="'.route('products.show', $product->slug).'"', false)
+        ->assertSee('Clickable Promoted Product');
+});
+
 test('active filters are labelled and can be cleared', function () {
     $category = Category::factory()->create(['name' => 'Bicycles']);
     $location = Location::query()->create(['name' => 'Addis Ababa']);
@@ -782,40 +916,113 @@ test('the clear price range link removes only price filters', function () {
         ->assertOk()
         ->assertSee('Clear price range');
 
-    expect($response->viewData('clearPriceRangeUrl'))->toBe(route('home', ['q' => 'bike']));
+    $previousInternalErrors = libxml_use_internal_errors(true);
+    $document = new DOMDocument;
+    $document->loadHTML((string) $response->getContent());
+    libxml_clear_errors();
+    libxml_use_internal_errors($previousInternalErrors);
+
+    $form = collect(iterator_to_array($document->getElementsByTagName('form')))
+        ->first(fn (DOMElement $candidate): bool => $candidate->getAttribute('method') === 'GET');
+
+    expect($response->viewData('clearPriceRangeUrl'))->toBe(route('home', ['q' => 'bike']))
+        ->and($form->textContent)->not->toContain('Clear price range')
+        ->and($document->textContent)->toContain('Clear price range');
 });
 
-test('product detail offers eligible similar adverts nearest in price', function () {
+test('product detail ranks eligible similar adverts by category condition and price', function () {
     $category = Category::factory()->create(['name' => 'Bicycles']);
     $otherCategory = Category::factory()->create(['name' => 'Desks']);
 
     $currentProduct = Product::factory()
         ->for($category, 'category')
         ->approved()
-        ->create(['title' => 'Current Bike', 'price_minor' => 100000]);
+        ->create([
+            'title' => 'Current Bike',
+            'price_minor' => 100000,
+            'condition' => Product::CONDITION_GOOD,
+        ]);
+    $betterConditionSameCategory = Product::factory()
+        ->for($category, 'category')
+        ->approved()
+        ->create([
+            'title' => 'Premium Bike',
+            'price_minor' => 900000,
+            'condition' => Product::CONDITION_NEW,
+        ]);
     $nearSameCategory = Product::factory()
         ->for($category, 'category')
         ->approved()
-        ->create(['title' => 'Near Bike', 'price_minor' => 110000]);
+        ->create([
+            'title' => 'Near Bike',
+            'price_minor' => 110000,
+            'condition' => Product::CONDITION_GOOD,
+        ]);
     $farSameCategory = Product::factory()
         ->for($category, 'category')
         ->approved()
-        ->create(['title' => 'Far Bike', 'price_minor' => 900000]);
+        ->create([
+            'title' => 'Far Bike',
+            'price_minor' => 900000,
+            'condition' => Product::CONDITION_GOOD,
+        ]);
     $nearOtherCategory = Product::factory()
         ->for($otherCategory, 'category')
         ->approved()
-        ->create(['title' => 'Near Desk', 'price_minor' => 105000]);
+        ->create([
+            'title' => 'Near Desk',
+            'price_minor' => 105000,
+            'condition' => Product::CONDITION_GOOD,
+        ]);
 
     $response = $this->get(route('products.show', $currentProduct->slug))
         ->assertOk()
         ->assertSee('Similar adverts')
+        ->assertSee('Premium Bike')
         ->assertSee('Near Bike')
         ->assertSee(route('products.show', $nearSameCategory->slug), false);
 
     expect($response->viewData('similarProducts')->pluck('id')->all())->toBe([
+        $betterConditionSameCategory->id,
         $nearSameCategory->id,
         $farSameCategory->id,
         $nearOtherCategory->id,
+    ]);
+});
+
+test('product detail breaks equal similarity ties by product id', function () {
+    $category = Category::factory()->create(['name' => 'Bicycles']);
+
+    $currentProduct = Product::factory()
+        ->for($category, 'category')
+        ->approved()
+        ->create([
+            'title' => 'Current Bike',
+            'price_minor' => 100000,
+            'condition' => Product::CONDITION_GOOD,
+        ]);
+    $firstTie = Product::factory()
+        ->for($category, 'category')
+        ->approved()
+        ->create([
+            'title' => 'First Tie Bike',
+            'price_minor' => 100000,
+            'condition' => Product::CONDITION_GOOD,
+        ]);
+    $secondTie = Product::factory()
+        ->for($category, 'category')
+        ->approved()
+        ->create([
+            'title' => 'Second Tie Bike',
+            'price_minor' => 100000,
+            'condition' => Product::CONDITION_GOOD,
+        ]);
+
+    $response = $this->get(route('products.show', $currentProduct->slug))->assertOk();
+
+    expect($response->viewData('similarProducts')->pluck('id')->all())->toBe([
+        $firstTie->id,
+        $secondTie->id,
     ]);
 });
 
@@ -866,3 +1073,78 @@ test('product detail excludes ineligible products from similar adverts', functio
         return $product;
     },
 ]);
+
+test('price inputs and validation share the same 0.01 minimum', function () {
+    $this->get(route('home', ['min_price' => '0']))
+        ->assertRedirect(route('home'))
+        ->assertSessionHasErrors('min_price', 'The min price field must be at least 0.01.');
+
+    $this->get(route('home', ['min_price' => '0.01']))->assertOk();
+
+    $response = $this->get(route('home'))->assertOk();
+
+    $previousInternalErrors = libxml_use_internal_errors(true);
+    $document = new DOMDocument;
+    $document->loadHTML((string) $response->getContent());
+    libxml_clear_errors();
+    libxml_use_internal_errors($previousInternalErrors);
+
+    $minimums = collect(iterator_to_array($document->getElementsByTagName('input')))
+        ->filter(fn (DOMElement $input): bool => in_array($input->getAttribute('name'), ['min_price', 'max_price'], true))
+        ->mapWithKeys(fn (DOMElement $input): array => [$input->getAttribute('name') => $input->getAttribute('min')])
+        ->all();
+
+    expect($minimums)->toBe(['min_price' => '0.01', 'max_price' => '0.01']);
+});
+
+test('title sort is preserved in pagination and filter removal URLs', function () {
+    foreach (range('A', 'M') as $letter) {
+        Product::factory()->approved()->create([
+            'title' => "Sofa {$letter}",
+            'price_minor' => 2000,
+        ]);
+    }
+
+    $response = $this->get(route('home', [
+        'q' => 'sofa',
+        'min_price' => '10',
+        'sort' => 'title_asc',
+        'page' => 2,
+    ]))->assertOk();
+
+    $activeFilterUrls = collect($response['activeFilters'])->pluck('url');
+
+    expect($activeFilterUrls)->not->toBeEmpty();
+    $activeFilterUrls->each(fn (string $url) => expect($url)->toContain('sort=title_asc'));
+
+    expect($response['products']->url(2))->toContain('sort=title_asc');
+    expect($response['clearPriceRangeUrl'])->toContain('sort=title_asc');
+    expect($response['clearFiltersUrl'])->not->toContain('sort=');
+
+    $response->assertSee('sort=title_asc', false);
+});
+
+test('title sort still excludes unavailable products', function () {
+    $available = Product::factory()
+        ->approved()
+        ->create(['title' => 'Available Chair']);
+
+    Product::factory()->create(['title' => 'Approved Chair']);
+
+    $reserved = Product::factory()
+        ->approved()
+        ->create(['title' => 'Reserved Chair']);
+
+    Product::query()->whereKey($reserved->id)->update(['reservation_token' => 'RM-TITLE-001']);
+
+    $sold = Product::factory()
+        ->approved()
+        ->create(['title' => 'Sold Chair']);
+
+    $order = Order::factory()->for(User::factory()->create(), 'buyer')->create();
+    OrderItem::factory()->for($order)->create(['product_id' => $sold->id]);
+
+    $response = $this->get(route('home', ['sort' => 'title_asc']))->assertOk();
+
+    expect($response['products']->pluck('id')->all())->toBe([$available->id]);
+});

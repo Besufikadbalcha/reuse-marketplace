@@ -4,8 +4,8 @@ return [
     'meta_description' => 'Browse approved second-hand products, sell items you no longer need, and give quality goods another life on Reuse Marketplace.',
     'menu' => 'Menu',
     'hero' => [
-        'heading' => 'Buy and Sell Pre-Loved Items with Confidence',
-        'description' => 'Discover affordable second-hand products and give quality items a new life. Shop and sell with ease on Reuse Marketplace.',
+        'heading' => 'Pre-loved finds, ready for you',
+        'description' => 'Browse approved second-hand listings and give good items another life.',
         'visual_tag' => 'Second-life finds',
         'visual_note' => 'Featured Promotion',
     ],

@@ -29,20 +29,10 @@ class Order extends Model
     /** @use HasFactory<OrderFactory> */
     use HasFactory;
 
-    /**
-     * The model's default values for attributes.
-     *
-     * @var array<string, mixed>
-     */
     protected $attributes = [
         'status' => self::STATUS_PENDING,
     ];
 
-    /**
-     * Get the attributes that should be cast.
-     *
-     * @return array<string, string>
-     */
     protected function casts(): array
     {
         return [
@@ -62,6 +52,11 @@ class Order extends Model
         return $this->hasMany(OrderItem::class);
     }
 
+    public function statusHistories(): HasMany
+    {
+        return $this->hasMany(OrderItemStatusHistory::class)->latest();
+    }
+
     #[Scope]
     protected function forSeller(Builder $query, User $seller): Builder
     {
@@ -72,8 +67,8 @@ class Order extends Model
     protected function withSellerItems(Builder $query, User $seller): Builder
     {
         return $query->with([
-            'items' => fn (HasMany $itemQuery) => $itemQuery->forSeller($seller),
-            'items.product',
+            'items' => fn (HasMany $itemQuery) => $itemQuery->forSeller($seller)->with(['product', 'statusHistories.actor']),
+            'items.statusHistories.actor',
         ]);
     }
 
@@ -85,6 +80,16 @@ class Order extends Model
     public function formattedTotal(): string
     {
         return Product::formatMoney($this->total_amount_minor);
+    }
+
+    public function isPickup(): bool
+    {
+        return $this->fulfillment_method === self::FULFILLMENT_PICKUP;
+    }
+
+    public function isCashOnDelivery(): bool
+    {
+        return $this->fulfillment_method === self::FULFILLMENT_CASH_ON_DELIVERY;
     }
 
     public function statusLabel(): string
@@ -105,5 +110,32 @@ class Order extends Model
             self::FULFILLMENT_CASH_ON_DELIVERY => __('Cash on delivery'),
             default => ucfirst(str_replace('_', ' ', (string) $this->fulfillment_method)),
         };
+    }
+
+    public function refreshAggregateStatus(): void
+    {
+        $this->loadMissing('items');
+
+        if ($this->status === self::STATUS_CANCELLED || $this->items->isEmpty()) {
+            return;
+        }
+
+        $statuses = $this->items->map(fn (OrderItem $item): string => $item->fulfillmentStatus())->unique()->values();
+
+        $next = self::STATUS_PENDING;
+        if ($statuses->count() === 1 && $statuses->first() === OrderItem::FULFILLMENT_COMPLETED) {
+            $next = self::STATUS_COMPLETED;
+        } elseif ($statuses->contains(OrderItem::FULFILLMENT_DISPUTED)
+            || $statuses->contains(OrderItem::FULFILLMENT_COMPLETED)
+            || $statuses->contains(OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION)
+            || $statuses->contains(OrderItem::FULFILLMENT_READY_FOR_PICKUP)
+            || $statuses->contains(OrderItem::FULFILLMENT_OUT_FOR_DELIVERY)
+            || $statuses->contains(OrderItem::FULFILLMENT_CONFIRMED)) {
+            $next = self::STATUS_CONFIRMED;
+        }
+
+        if ($this->status !== $next) {
+            $this->forceFill(['status' => $next])->save();
+        }
     }
 }

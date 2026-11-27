@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
-#[Fillable(['seller_id', 'category_id', 'location_id', 'title', 'slug', 'description', 'price_minor', 'condition', 'status', 'rejection_reason'])]
+#[Fillable(['seller_id', 'category_id', 'location_id', 'title', 'slug', 'description', 'price_minor', 'condition', 'status', 'rejection_reason', 'archived_at', 'seller_archived_at'])]
 class Product extends Model
 {
     public const CONDITION_NEW = 'new';
@@ -54,6 +54,8 @@ class Product extends Model
             'price_minor' => 'integer',
             'condition' => 'string',
             'status' => 'string',
+            'archived_at' => 'datetime',
+            'seller_archived_at' => 'datetime',
         ];
     }
 
@@ -65,6 +67,31 @@ class Product extends Model
     public function isOwnedBy(?Authenticatable $user): bool
     {
         return $user !== null && (int) $this->seller_id === (int) $user->getAuthIdentifier();
+    }
+
+    public function isArchived(): bool
+    {
+        return $this->archived_at !== null;
+    }
+
+    public function isSellerArchived(): bool
+    {
+        return $this->seller_archived_at !== null;
+    }
+
+    public function isEligibleForSellerRestore(): bool
+    {
+        if ($this->seller_archived_at === null || $this->archived_at !== null) {
+            return false;
+        }
+
+        if ($this->status === self::STATUS_REJECTED || $this->reservation_token !== null) {
+            return false;
+        }
+
+        return ! $this->orderItems()
+            ->whereHas('order', fn (Builder $orderQuery): Builder => $orderQuery->where('status', '!=', Order::STATUS_CANCELLED))
+            ->exists();
     }
 
     public function category(): BelongsTo
@@ -106,34 +133,102 @@ class Product extends Model
     }
 
     #[Scope]
-    protected function publiclyVisible(Builder $query): Builder
+    protected function notArchived(Builder $query): Builder
     {
-        return $query->approved()
-            ->whereHas('category', fn (Builder $categoryQuery): Builder => $categoryQuery->active());
+        return $query
+            ->whereNull('archived_at')
+            ->whereNull('seller_archived_at')
+            ->whereHas('seller', fn (Builder $sellerQuery): Builder => $sellerQuery->whereNull('archived_at'));
     }
 
     #[Scope]
-    protected function search(Builder $query, string $search): Builder
+    protected function publiclyVisible(Builder $query): Builder
     {
-        $pattern = '%'.str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $search).'%';
-        $grammar = $query->getQuery()->getGrammar();
+        return $query->approved()
+            ->notArchived()
+            ->whereHas('category', fn (Builder $categoryQuery): Builder => $categoryQuery->active());
+    }
 
-        return $query->where(function (Builder $query) use ($pattern, $grammar): void {
-            $query->whereRaw(
-                'lower('.$grammar->wrap('title').') like lower(?) escape \'!\'',
-                [$pattern],
-            )
-                ->orWhereRaw(
-                    'lower('.$grammar->wrap('description').') like lower(?) escape \'!\'',
-                    [$pattern],
-                )
-                ->orWhereHas('category', function (Builder $categoryQuery) use ($pattern, $grammar): void {
-                    $categoryQuery->whereRaw(
-                        'lower('.$grammar->wrap('name').') like lower(?) escape \'!\'',
-                        [$pattern],
-                    );
+    public static function searchTermList(string $search): array
+    {
+        return preg_split('/[\p{Z}\s]+/u', trim($search), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    }
+
+    private static function escapeLikeWildcards(string $term): string
+    {
+        return str_replace(['!', '%', '_'], ['!!', '!%', '!_'], $term);
+    }
+
+    #[Scope]
+    protected function searchTerms(Builder $query, string $search): Builder
+    {
+        $terms = self::searchTermList($search);
+
+        if ($terms === []) {
+            return $query;
+        }
+
+        $grammar = $query->getQuery()->getGrammar();
+        $titleColumn = $grammar->wrap('title');
+        $descriptionColumn = $grammar->wrap('description');
+        $nameColumn = $grammar->wrap('name');
+
+        return $query->where(function (Builder $query) use ($terms, $titleColumn, $descriptionColumn, $nameColumn): void {
+            foreach ($terms as $term) {
+                $pattern = '%'.self::escapeLikeWildcards($term).'%';
+
+                $query->where(function (Builder $query) use ($pattern, $titleColumn, $descriptionColumn, $nameColumn): void {
+                    $query->whereRaw('lower('.$titleColumn.') like lower(?) escape \'!\'', [$pattern])
+                        ->orWhereRaw('lower('.$descriptionColumn.') like lower(?) escape \'!\'', [$pattern])
+                        ->orWhereHas('category', fn (Builder $categoryQuery): Builder => $categoryQuery->whereRaw(
+                            'lower('.$nameColumn.') like lower(?) escape \'!\'',
+                            [$pattern],
+                        ));
                 });
+            }
         });
+    }
+
+    #[Scope]
+    protected function rankBySearchTerms(Builder $query, string $search): Builder
+    {
+        $terms = self::searchTermList($search);
+
+        if ($terms === []) {
+            return $query;
+        }
+
+        $grammar = $query->getQuery()->getGrammar();
+        $productsTable = $query->getModel()->getTable();
+        $titleColumn = $grammar->wrap($productsTable.'.title');
+        $descriptionColumn = $grammar->wrap($productsTable.'.description');
+        $categoryIdColumn = $grammar->wrap($productsTable.'.category_id');
+        $categoryNameColumn = $grammar->wrap('c.name');
+        $categoryIdAlias = $grammar->wrap('c.id');
+        $categoryTable = $grammar->wrapTable((new Category)->getTable()).' as c';
+
+        $titleConditions = [];
+        $categoryConditions = [];
+        $descriptionConditions = [];
+
+        foreach ($terms as $term) {
+            $pattern = $grammar->quoteString('%'.self::escapeLikeWildcards($term).'%');
+
+            $titleConditions[] = 'lower('.$titleColumn.') like lower('.$pattern.') escape \'!\'';
+            $categoryConditions[] = 'lower('.$categoryNameColumn.') like lower('.$pattern.') escape \'!\'';
+            $descriptionConditions[] = 'lower('.$descriptionColumn.') like lower('.$pattern.') escape \'!\'';
+        }
+
+        $categoryCondition = implode(' or ', $categoryConditions);
+        $score = 'case when '.implode(' or ', $titleConditions)
+            .' then 3 when exists (select 1 from '.$categoryTable.' where '.$categoryIdAlias.' = '.$categoryIdColumn
+            .' and ('.$categoryCondition.')) then 2 when '.implode(' or ', $descriptionConditions)
+            .' then 1 else 0 end';
+
+        return $query
+            ->orderByRaw($score.' desc')
+            ->orderByDesc($productsTable.'.created_at')
+            ->orderByDesc($productsTable.'.id');
     }
 
     #[Scope]
@@ -150,6 +245,26 @@ class Product extends Model
             ->whereDoesntHave('orderItems', function (Builder $itemQuery): void {
                 $itemQuery->whereHas('order', fn (Builder $orderQuery): Builder => $orderQuery->where('status', '!=', Order::STATUS_CANCELLED));
             });
+    }
+
+    #[Scope]
+    protected function catalogFilters(Builder $query, array $filters, bool $locationFilterAvailable): Builder
+    {
+        return $query
+            ->when(($filters['category'] ?? '') !== '', fn (Builder $query): Builder => $query->where('category_id', $filters['category']))
+            ->when(
+                $locationFilterAvailable && ($filters['location'] ?? '') !== '',
+                fn (Builder $query): Builder => $query->inLocation((string) $filters['location']),
+            )
+            ->when(($filters['condition'] ?? '') !== '', fn (Builder $query): Builder => $query->where('condition', $filters['condition']))
+            ->when(
+                ($filters['min_price'] ?? '') !== '',
+                fn (Builder $query): Builder => $query->where('price_minor', '>=', (int) round(((float) $filters['min_price']) * 100)),
+            )
+            ->when(
+                ($filters['max_price'] ?? '') !== '',
+                fn (Builder $query): Builder => $query->where('price_minor', '<=', (int) round(((float) $filters['max_price']) * 100)),
+            );
     }
 
     #[Scope]

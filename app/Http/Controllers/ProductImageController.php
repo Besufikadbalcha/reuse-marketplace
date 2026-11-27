@@ -12,7 +12,10 @@ class ProductImageController extends Controller
     public function show(Product $product, ProductImage $image): BinaryFileResponse
     {
         abort_unless($image->product_id === $product->id, 404);
-        abort_unless($product->status === Product::STATUS_APPROVED, 404);
+        abort_unless(
+            Product::query()->whereKey($product->id)->approved()->notArchived()->exists(),
+            404
+        );
         abort_unless($product->category()->active()->exists(), 404);
         abort_unless($image->isServableForSeller((int) $product->seller_id), 404);
 

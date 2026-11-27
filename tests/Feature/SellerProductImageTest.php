@@ -100,6 +100,51 @@ test('jpeg png and webp uploads are accepted', function () {
     Storage::disk('local')->assertCount('seller-products/'.$seller->id, 3);
 });
 
+test('the create form allows selecting multiple product images', function () {
+    $seller = User::factory()->create();
+    Category::factory()->create();
+    Location::query()->create(['name' => 'Multi Image Location']);
+
+    $this->actingAs($seller)
+        ->get(route('seller.products.create'))
+        ->assertOk()
+        ->assertSee('name="images[]"', false)
+        ->assertSee('multiple', false)
+        ->assertSee('Upload 1–5 JPEG, PNG, or WebP images.', false);
+});
+
+test('a seller can add multiple images while editing and keep existing ones', function () {
+    Storage::fake('local');
+    Storage::fake('public');
+
+    $seller = User::factory()->create();
+    $product = Product::factory()->for($seller, 'seller')->create([
+        'title' => 'Multi Edit Item',
+    ]);
+    $existingPath = 'seller-products/'.$seller->id.'/existing.jpg';
+    ProductImage::factory()->for($product, 'product')->create([
+        'path' => $existingPath,
+        'sort_order' => 0,
+    ]);
+    Storage::disk('local')->put($existingPath, 'existing-image');
+
+    $this->actingAs($seller)->put(
+        route('seller.products.update', $product),
+        sellerImageTestUpdatePayload($product, [
+            'images' => [
+                sellerImageTestFakeImage('front.jpg'),
+                sellerImageTestFakeImage('back.png'),
+            ],
+        ])
+    )->assertRedirect(route('seller.products.show', $product));
+
+    expect($product->images()->count())->toBe(3)
+        ->and($product->images()->where('path', $existingPath)->exists())->toBeTrue();
+
+    Storage::disk('local')->assertCount('seller-products/'.$seller->id, 3);
+    Storage::disk('local')->assertExists($existingPath);
+});
+
 test('newly uploaded images stay private and never receive a public url', function () {
     Storage::fake('local');
     Storage::fake('public');

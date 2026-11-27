@@ -41,13 +41,13 @@ return [
                 'icon' => 'truck',
             ],
             'confirm' => [
-                'title' => 'Tartiib mirkaneeffi',
-                'body' => 'Shijoon meeshaa tartiibii mirkaneeffa. Haala sana yeroo hunda bal\'ina tartiib keessan keessaa ilaattu.',
+                'title' => 'Tartiib mirkaneessi fi qopheessi',
+                'body' => "Shijoon tartiiba mirkaneessa, fudhachuuf ykn dhiyeessuuf qopheessa. Haala sana yeroo hunda bal'ina tartiib keessan keessaa ilaattu.",
                 'icon' => 'check',
             ],
             'complete' => [
-                'title' => 'Hojii xumuri',
-                'body' => "Meeshaan erga kennamee booda, shijoon xumurame jeddee mallattoo godha. Tartiibis xumurame ta'ee mul'ata.",
+                'title' => 'Fudhachuu mirkaneessi fi xumuri',
+                'body' => "Yeroo meeshaan kennamu, shijoon kaatii fudhate galmeessa. Sana booda, meeshaa fudhachuu keessan bal'ina tartiiba keessatti mirkaneessitu. Erga fudhachuu mirkaneessitanii booda, shijoon meeshaa xumurame gochuu danda'a; tartiibnis ni xumurama.",
                 'icon' => 'flag',
             ],
         ],

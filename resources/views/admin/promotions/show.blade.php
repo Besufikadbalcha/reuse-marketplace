@@ -18,7 +18,11 @@
         <x-alert type="error" class="mb-6">{{ __(session('error')) }}</x-alert>
     @endif
 
-    @if ($promotion->product?->status !== App\Models\Product::STATUS_APPROVED)
+    @if ($promotion->product?->isArchived())
+        <x-alert type="error" class="mb-6">
+            {{ __('This listing is archived. Payment approval is blocked until the listing is restored.') }}
+        </x-alert>
+    @elseif ($promotion->product?->status !== App\Models\Product::STATUS_APPROVED)
         <x-alert type="error" class="mb-6">
             {{ __('This listing is no longer approved. Payment approval is blocked until the listing is approved again.') }}
         </x-alert>

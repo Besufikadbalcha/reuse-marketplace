@@ -28,6 +28,14 @@ class UpdateSellerProductRequest extends FormRequest
 
     public function prepareForValidation(): void
     {
+        $product = $this->route('product');
+
+        if ($product instanceof Product && ! $this->exists('condition')) {
+            $this->merge([
+                'condition' => $product->condition,
+            ]);
+        }
+
         $imageOrder = $this->input('image_order');
 
         if (! is_array($imageOrder)) {

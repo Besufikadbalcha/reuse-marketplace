@@ -14,7 +14,8 @@ test('renders the how it works page with its title, description, and steps', fun
         ->assertSee('Sellers create and submit a listing')
         ->assertSee('Admin review before approval')
         ->assertSee('Choose pickup or cash on delivery')
-        ->assertSee('Complete the exchange');
+        ->assertSee('Confirm receipt and complete')
+        ->assertSee('At handover, the seller records cash received. After that, you confirm in your order that you received the item. Once you confirm receipt, the seller can mark the item complete and the order is completed.');
 });
 
 test('renders the about us page with its title, description, and mission', function () {

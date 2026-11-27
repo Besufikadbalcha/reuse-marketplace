@@ -4,8 +4,8 @@ return [
     'meta_description' => 'Meeshaalee darbii itti fayyadamaa fi meeshaalee namoonni biroo itti fayyadamuu danda’an gabaa Reuse Marketplace keessatti ilaali, gurguri fi jireenya lammaffaa kennaaf.',
     'menu' => 'Meeshii',
     'hero' => [
-        'heading' => 'Meeshaalee darbii itti fayyadamaa amanaa’aan bitaa fi gurgurtaa',
-        'description' => 'Meeshaalee darbii itti fayyadamaa gatii madaalawaa qaban argattu; meeshaalee gaariif jireenya haara kenna. Gabaa Reuse Marketplace keessatti salphaatti bitaa fi gurgurtaa.',
+        'heading' => 'Meeshaalee darbii, siif qophii',
+        'description' => 'Dubbisaalee eeyyaman ilaali fi meeshaalee gaariif jireenya haara kennaaf.',
         'visual_tag' => 'Jireenya lammaffaa argattan',
         'visual_note' => 'Tamsa\'a maqaammii',
     ],

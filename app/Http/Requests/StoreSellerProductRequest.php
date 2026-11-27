@@ -22,6 +22,18 @@ class StoreSellerProductRequest extends FormRequest
      *
      * @return array<string, ValidationRule|array<mixed>|string>
      */
+    protected function prepareForValidation(): void
+    {
+        if (! $this->filled('condition')) {
+            $this->merge(['condition' => Product::CONDITION_LIKE_NEW]);
+        }
+    }
+
+    /**
+     * Get the validation rules that apply to the request.
+     *
+     * @return array<string, ValidationRule|array<mixed>|string>
+     */
     public function rules(): array
     {
         return [

@@ -463,6 +463,28 @@ test('an unapproved listing blocks payment approval', function () {
     Notification::assertNotSentTo($seller, PromotionPaymentApprovedNotification::class);
 });
 
+test('an archived listing blocks payment approval until it is restored', function () {
+    ['admin' => $admin, 'seller' => $seller, 'product' => $product, 'promotion' => $promotion, 'submission' => $submission] = adminPromotionTestFixture();
+
+    $product->update(['archived_at' => now()]);
+
+    Notification::fake();
+
+    $this->actingAs($admin)
+        ->get(route('admin.promotions.show', $promotion))
+        ->assertOk()
+        ->assertSee('This listing is archived. Payment approval is blocked until the listing is restored.');
+
+    $this->actingAs($admin)
+        ->post(route('admin.promotions.payments.approve', [$promotion, $submission]))
+        ->assertSessionHas('error', __('This promotion cannot be activated because its listing is no longer approved.'));
+
+    expect($promotion->fresh()->status)->toBe(ProductPromotion::STATUS_PAYMENT_PENDING)
+        ->and($submission->fresh()->status)->toBe(PromotionPaymentSubmission::STATUS_PENDING);
+
+    Notification::assertNotSentTo($seller, PromotionPaymentApprovedNotification::class);
+});
+
 test('a conflicting unique payment state does not notify the seller', function () {
     ['admin' => $admin, 'seller' => $seller, 'promotion' => $promotion, 'submission' => $submission] = adminPromotionTestFixture();
 

@@ -217,6 +217,11 @@ test('an approved listing with an open promotion cannot be submitted again', fun
         ->post(route('seller.promotions.store', $product), promotionTestPayload($promotion->package))
         ->assertSessionHasErrors('product');
 
+    $this->actingAs($seller)
+        ->get(route('seller.products.index'))
+        ->assertOk()
+        ->assertDontSee(route('seller.promotions.create', $product));
+
     expect(ProductPromotion::query()->where('product_id', $product->id)->count())->toBe(1);
 });
 
@@ -238,6 +243,76 @@ test('my listings only offers promotion for approved listings without an open pr
         ->assertSee(route('seller.promotions.create', $promotable))
         ->assertDontSee(route('seller.promotions.create', $promoted))
         ->assertDontSee(route('seller.promotions.create', $pending));
+});
+
+test('my listings renders the promotion status and action for each promotion state', function (?string $state, string $statusLabel, string $actionLabel, string $expectedRoute) {
+    $seller = User::factory()->create();
+    $product = promotionTestApprovedProduct($seller);
+
+    $promotion = null;
+
+    if ($state !== null) {
+        $promotion = ProductPromotion::factory()
+            ->{$state}()
+            ->for($seller, 'seller')
+            ->for($product)
+            ->create();
+    }
+
+    $response = $this->actingAs($seller)
+        ->get(route('seller.products.index'));
+
+    $response->assertOk()
+        ->assertSee($statusLabel)
+        ->assertSee($actionLabel);
+
+    if ($expectedRoute === 'show' && $promotion !== null) {
+        $response->assertSee(route('seller.promotions.show', $promotion))
+            ->assertDontSee(route('seller.promotions.create', $product));
+    } else {
+        $response->assertSee(route('seller.promotions.create', $product));
+    }
+
+    if ($expectedRoute === 'create' && $promotion !== null) {
+        $response->assertDontSee(route('seller.promotions.show', $promotion));
+    }
+})->with([
+    'no promotion' => [null, 'No promotion', 'Request Promotion', 'create'],
+    'payment pending' => ['paymentPending', 'Payment pending', 'View Promotion', 'show'],
+    'payment rejected' => ['paymentRejected', 'Payment rejected', 'Resubmit Payment', 'show'],
+    'active' => ['active', 'Active', 'View Promotion', 'show'],
+    'paused' => ['paused', 'Paused', 'View Promotion', 'show'],
+    'expired' => ['expired', 'Expired', 'Request Promotion', 'create'],
+    'stopped after sale' => ['stoppedSold', 'Stopped after sale', 'Request Promotion', 'create'],
+]);
+
+test('the rejected-payment action opens the promotion request where payment can be resubmitted', function () {
+    $seller = User::factory()->create();
+    $product = promotionTestApprovedProduct($seller);
+    $promotion = ProductPromotion::factory()
+        ->paymentRejected()
+        ->for($seller, 'seller')
+        ->for($product)
+        ->create();
+
+    PromotionPaymentSubmission::factory()
+        ->telebirr()
+        ->rejected()
+        ->for($promotion, 'promotion')
+        ->create(['attempt' => 1]);
+
+    $this->actingAs($seller)
+        ->get(route('seller.products.index'))
+        ->assertOk()
+        ->assertSee(__('Payment rejected'))
+        ->assertSee(__('Resubmit Payment'))
+        ->assertSee(route('seller.promotions.show', $promotion))
+        ->assertDontSee(route('seller.promotions.create', $product));
+
+    $this->actingAs($seller)
+        ->get(route('seller.promotions.show', $promotion))
+        ->assertOk()
+        ->assertSee(route('seller.promotions.resubmit', $promotion));
 });
 
 test('a rejected payment is resubmitted on the same promotion with a new attempt', function () {
@@ -376,6 +451,44 @@ test('a rejected payment cannot be resubmitted after the listing leaves approved
         ->assertNotFound();
 });
 
+test('an archived listing cannot request or resubmit promotion', function () {
+    $seller = User::factory()->create();
+    $product = promotionTestApprovedProduct($seller);
+    $product->update(['archived_at' => now()]);
+    $promotion = ProductPromotion::factory()
+        ->paymentRejected()
+        ->for($seller, 'seller')
+        ->for($product)
+        ->create();
+
+    PromotionPaymentSubmission::factory()
+        ->rejected()
+        ->for($promotion, 'promotion')
+        ->create(['attempt' => 1]);
+
+    $this->actingAs($seller)
+        ->get(route('seller.promotions.create', $product))
+        ->assertNotFound();
+
+    $this->actingAs($seller)
+        ->get(route('seller.promotions.show', $promotion))
+        ->assertOk()
+        ->assertDontSee(route('seller.promotions.resubmit', $promotion));
+
+    $this->actingAs($seller)
+        ->get(route('seller.promotions.resubmit', $promotion))
+        ->assertRedirect(route('seller.promotions.show', $promotion))
+        ->assertSessionHas('error', __('This payment submission can no longer be resubmitted.'));
+
+    $this->actingAs($seller)
+        ->post(route('seller.promotions.resubmit.store', $promotion), [
+            'method' => PromotionPaymentSubmission::METHOD_TELEBIRR,
+            'transaction_details' => 'Should not be accepted.',
+            'proof' => promotionTestProof(),
+        ])
+        ->assertNotFound();
+});
+
 test('an eligible seller sees the promotion submission form', function () {
     $seller = User::factory()->create();
     $product = promotionTestApprovedProduct($seller);
@@ -413,4 +526,96 @@ test('a seller sees the resubmission form with the reviewer note', function () {
         ->assertSee('The receipt was unreadable.')
         ->assertSee('Unchanged package')
         ->assertSee('Original payment details.');
+});
+
+test('seller product detail offers promotion for an approved eligible listing', function () {
+    $seller = User::factory()->create();
+    $product = promotionTestApprovedProduct($seller);
+
+    $this->actingAs($seller)
+        ->get(route('seller.products.show', $product))
+        ->assertOk()
+        ->assertSee(__('Promote This Item'))
+        ->assertSee(route('seller.promotions.create', $product), false)
+        ->assertSee(__('Edit listing'))
+        ->assertSee(__('Delete listing'))
+        ->assertDontSee(__('View Promotion'))
+        ->assertViewHas('canRequestPromotion', true)
+        ->assertViewHas('promotion', null);
+});
+
+test('seller product detail hides promotion for ineligible listings', function (callable $makeProduct) {
+    $seller = User::factory()->create();
+    $product = $makeProduct($seller);
+
+    $this->actingAs($seller)
+        ->get(route('seller.products.show', $product))
+        ->assertOk()
+        ->assertDontSee(__('Promote This Item'))
+        ->assertDontSee(route('seller.promotions.create', $product), false)
+        ->assertViewHas('canRequestPromotion', false);
+})->with([
+    'pending' => fn (User $seller): Product => Product::factory()->for($seller, 'seller')->create(['title' => 'Pending Listing']),
+    'rejected' => fn (User $seller): Product => Product::factory()->rejected()->for($seller, 'seller')->create(['title' => 'Rejected Listing']),
+    'archived' => fn (User $seller): Product => Product::factory()->approved()->archived()->for($seller, 'seller')->create(['title' => 'Archived Listing']),
+    'seller archived' => fn (User $seller): Product => Product::factory()->approved()->sellerArchived()->for($seller, 'seller')->create(['title' => 'Seller Archived Listing']),
+]);
+
+test('seller product detail shows the open promotion status and action', function (string $factoryState, string $statusLabel, string $actionLabel) {
+    $seller = User::factory()->create();
+    $product = promotionTestApprovedProduct($seller);
+    $promotion = ProductPromotion::factory()
+        ->{$factoryState}()
+        ->for($seller, 'seller')
+        ->for($product)
+        ->create();
+
+    $this->actingAs($seller)
+        ->get(route('seller.products.show', $product))
+        ->assertOk()
+        ->assertSee(__('Promotion'))
+        ->assertSee($statusLabel)
+        ->assertSee($actionLabel)
+        ->assertSee(route('seller.promotions.show', $promotion), false)
+        ->assertDontSee(__('Promote This Item'))
+        ->assertDontSee(route('seller.promotions.create', $product), false)
+        ->assertViewHas('canRequestPromotion', false);
+})->with([
+    'payment pending' => ['paymentPending', 'Payment pending', 'View Promotion'],
+    'payment rejected' => ['paymentRejected', 'Payment rejected', 'Resubmit Payment'],
+    'active' => ['active', 'Active', 'View Promotion'],
+    'paused' => ['paused', 'Paused', 'View Promotion'],
+]);
+
+test('seller product detail offers promotion again after a closed promotion', function (string $factoryState, string $statusLabel) {
+    $seller = User::factory()->create();
+    $product = promotionTestApprovedProduct($seller);
+    ProductPromotion::factory()
+        ->{$factoryState}()
+        ->for($seller, 'seller')
+        ->for($product)
+        ->create();
+
+    $this->actingAs($seller)
+        ->get(route('seller.products.show', $product))
+        ->assertOk()
+        ->assertSee($statusLabel)
+        ->assertSee(__('Promote This Item'))
+        ->assertSee(route('seller.promotions.create', $product), false)
+        ->assertDontSee(__('View Promotion'))
+        ->assertViewHas('canRequestPromotion', true);
+})->with([
+    'expired' => ['expired', 'Expired'],
+    'stopped after sale' => ['stoppedSold', 'Stopped after sale'],
+]);
+
+test('seller product detail hides promotion actions from another seller', function () {
+    $seller = User::factory()->create();
+    $otherSeller = User::factory()->create();
+    $product = promotionTestApprovedProduct($seller);
+
+    $this->actingAs($otherSeller)
+        ->get(route('seller.products.show', $product))
+        ->assertNotFound()
+        ->assertDontSee(__('Promote This Item'));
 });

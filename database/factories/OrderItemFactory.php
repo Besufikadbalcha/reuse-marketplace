@@ -12,11 +12,6 @@ use Illuminate\Database\Eloquent\Factories\Factory;
  */
 class OrderItemFactory extends Factory
 {
-    /**
-     * Define the model's default state.
-     *
-     * @return array<string, mixed>
-     */
     public function definition(): array
     {
         return [
@@ -26,6 +21,7 @@ class OrderItemFactory extends Factory
             'price_minor' => fake()->numberBetween(100, 100000),
             'quantity' => 1,
             'seller_status' => OrderItem::SELLER_STATUS_PENDING,
+            'fulfillment_status' => OrderItem::FULFILLMENT_PENDING,
         ];
     }
 
@@ -33,6 +29,7 @@ class OrderItemFactory extends Factory
     {
         return $this->state(fn (array $attributes): array => [
             'seller_status' => OrderItem::SELLER_STATUS_CONFIRMED,
+            'fulfillment_status' => OrderItem::FULFILLMENT_CONFIRMED,
         ]);
     }
 
@@ -40,6 +37,9 @@ class OrderItemFactory extends Factory
     {
         return $this->state(fn (array $attributes): array => [
             'seller_status' => OrderItem::SELLER_STATUS_COMPLETED,
+            'fulfillment_status' => OrderItem::FULFILLMENT_COMPLETED,
+            'seller_cash_received_at' => now(),
+            'buyer_confirmed_received_at' => now(),
         ]);
     }
 }

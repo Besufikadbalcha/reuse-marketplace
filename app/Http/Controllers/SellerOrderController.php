@@ -4,12 +4,14 @@ namespace App\Http\Controllers;
 
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\OrderItemStatusHistory;
 use App\Notifications\SellerItemCompletedNotification;
 use App\Notifications\SellerItemConfirmedNotification;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class SellerOrderController extends Controller
 {
@@ -26,8 +28,8 @@ class SellerOrderController extends Controller
             ->withSellerItems($seller)
             ->when($status, function (Builder $query, string $selectedStatus) use ($seller): void {
                 $query->whereHas('items', function (Builder $itemQuery) use ($seller, $selectedStatus): void {
-                    $itemQuery->forSeller($seller)
-                        ->where('seller_status', $selectedStatus);
+                    $itemQuery->forSeller($seller);
+                    $this->applyStatusFilter($itemQuery, $selectedStatus);
                 });
             })
             ->latest()
@@ -51,73 +53,111 @@ class SellerOrderController extends Controller
 
     public function confirm(Request $request, Order $order, OrderItem $orderItem): RedirectResponse
     {
-        return $this->transition(
-            $request,
-            $order,
-            $orderItem,
-            OrderItem::SELLER_STATUS_PENDING,
-            OrderItem::SELLER_STATUS_CONFIRMED,
-            __('Only pending items can be confirmed.'),
-            __('Item confirmed.')
-        );
+        return $this->transition($request, $order, $orderItem, function (OrderItem $item): array {
+            abort_unless($item->canBeConfirmedBySeller(), 409, __('Only pending items can be confirmed.'));
+
+            return [OrderItem::FULFILLMENT_CONFIRMED, 'item_confirmed', __('Item confirmed.'), new SellerItemConfirmedNotification($item->order, $item)];
+        });
+    }
+
+    public function readyForPickup(Request $request, Order $order, OrderItem $orderItem): RedirectResponse
+    {
+        return $this->transition($request, $order, $orderItem, function (OrderItem $item): array {
+            abort_unless($item->isPickupOrder(), 409, __('This action is not available for delivery orders.'));
+            abort_unless($item->fulfillmentStatus() === OrderItem::FULFILLMENT_CONFIRMED, 409, __('Only confirmed pickup items can be marked ready.'));
+
+            return [OrderItem::FULFILLMENT_READY_FOR_PICKUP, 'item_ready_for_pickup', __('Item marked ready for pickup.'), null];
+        });
+    }
+
+    public function outForDelivery(Request $request, Order $order, OrderItem $orderItem): RedirectResponse
+    {
+        return $this->transition($request, $order, $orderItem, function (OrderItem $item): array {
+            abort_unless($item->isDeliveryOrder(), 409, __('This action is not available for pickup orders.'));
+            abort_unless($item->fulfillmentStatus() === OrderItem::FULFILLMENT_CONFIRMED, 409, __('Only confirmed delivery items can be marked out for delivery.'));
+
+            return [OrderItem::FULFILLMENT_OUT_FOR_DELIVERY, 'item_out_for_delivery', __('Item marked out for delivery.'), null];
+        });
+    }
+
+    public function recordCashReceived(Request $request, Order $order, OrderItem $orderItem): RedirectResponse
+    {
+        return $this->transition($request, $order, $orderItem, function (OrderItem $item): array {
+            abort_unless($item->canSellerRecordCashReceived(), 409, __('Cash can only be recorded after handover is started.'));
+
+            $item->seller_cash_received_at = now();
+            $item->seller_cash_received_by = auth()->id();
+
+            return [OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION, 'item_cash_received', __('Cash receipt recorded. Waiting for buyer confirmation.'), null];
+        });
     }
 
     public function complete(Request $request, Order $order, OrderItem $orderItem): RedirectResponse
     {
-        return $this->transition(
-            $request,
-            $order,
-            $orderItem,
-            OrderItem::SELLER_STATUS_CONFIRMED,
-            OrderItem::SELLER_STATUS_COMPLETED,
-            __('Only confirmed items can be completed.'),
-            __('Item marked complete.')
-        );
+        return $this->transition($request, $order, $orderItem, function (OrderItem $item): array {
+            abort_unless($item->seller_cash_received_at !== null, 409, __('Cash must be recorded before completion.'));
+            abort_unless($item->buyer_confirmed_received_at !== null, 409, __('This item can only be completed after buyer confirmation.'));
+            abort_unless(! $item->isDisputed(), 409, __('Disputed items cannot be completed.'));
+            abort_unless($item->fulfillmentStatus() === OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION, 409, __('This item can only be completed after buyer confirmation.'));
+
+            return [OrderItem::FULFILLMENT_COMPLETED, 'item_completed', __('Item marked complete.'), new SellerItemCompletedNotification($item->order, $item)];
+        });
     }
 
-    private function transition(
-        Request $request,
-        Order $order,
-        OrderItem $orderItem,
-        string $fromStatus,
-        string $toStatus,
-        string $errorMessage,
-        string $successMessage
-    ): RedirectResponse {
-        $item = $this->sellerItem($request, $order, $orderItem);
+    /**
+     * @param  callable(OrderItem):array{0:string,1:?string,2:string,3:?object}  $resolver
+     */
+    private function transition(Request $request, Order $order, OrderItem $orderItem, callable $resolver): RedirectResponse
+    {
+        $seller = $request->user();
+        $result = DB::transaction(function () use ($order, $orderItem, $seller, $resolver): array {
+            $item = OrderItem::query()
+                ->forSeller($seller)
+                ->whereKey($orderItem->id)
+                ->where('order_id', $order->id)
+                ->whereHas('order', fn (Builder $q): Builder => $q->lockForUpdate())
+                ->with('order')
+                ->lockForUpdate()
+                ->firstOrFail();
 
-        $updated = OrderItem::query()
-            ->whereKey($item->id)
-            ->forSeller($request->user())
-            ->where('order_id', $order->id)
-            ->where('seller_status', $fromStatus)
-            ->whereHas('order', fn (Builder $orderQuery): Builder => $orderQuery
-                ->where('status', '!=', Order::STATUS_CANCELLED))
-            ->update(['seller_status' => $toStatus]);
+            if ($item->order?->status === Order::STATUS_CANCELLED) {
+                abort(409, __('Cancelled orders cannot be changed.'));
+            }
 
-        if ($updated !== 1) {
-            abort(409, $errorMessage);
-        }
+            [$toStatus, $statusKey, $message, $notification] = $resolver($item);
+            $fromStatus = $item->fulfillmentStatus();
 
-        $statusKey = match ($toStatus) {
-            OrderItem::SELLER_STATUS_CONFIRMED => 'item_confirmed',
-            OrderItem::SELLER_STATUS_COMPLETED => 'item_completed',
-            default => null,
-        };
+            if ($fromStatus === $toStatus) {
+                abort(409, __('This item is already in that state.'));
+            }
 
-        $notification = match ($toStatus) {
-            OrderItem::SELLER_STATUS_CONFIRMED => new SellerItemConfirmedNotification($order, $item),
-            OrderItem::SELLER_STATUS_COMPLETED => new SellerItemCompletedNotification($order, $item),
-            default => null,
-        };
+            $item->fulfillment_status = $toStatus;
+            $item->save();
 
+            OrderItemStatusHistory::query()->create([
+                'order_id' => $order->id,
+                'order_item_id' => $item->id,
+                'actor_id' => $seller->id,
+                'actor_role' => 'seller',
+                'from_status' => $fromStatus,
+                'to_status' => $toStatus,
+                'metadata' => [
+                    'seller_cash_received_at' => optional($item->seller_cash_received_at)?->toIso8601String(),
+                    'buyer_confirmed_received_at' => optional($item->buyer_confirmed_received_at)?->toIso8601String(),
+                ],
+            ]);
+
+            $item->order->refreshAggregateStatus();
+
+            return [$message, $statusKey, $notification, $item];
+        }, attempts: 3);
+
+        [$message, $statusKey, $notification, $item] = $result;
         if ($notification !== null) {
             $order->buyer?->notify($notification);
         }
 
-        $redirect = redirect()->route('seller.orders.show', $order)
-            ->with('status', $successMessage);
-
+        $redirect = redirect()->route('seller.orders.show', $order)->with('status', $message);
         if ($statusKey !== null) {
             $redirect->with('status_key', $statusKey);
         }
@@ -134,14 +174,15 @@ class SellerOrderController extends Controller
             ->firstOrFail();
     }
 
-    private function sellerItem(Request $request, Order $order, OrderItem $orderItem): OrderItem
+    private function applyStatusFilter(Builder $itemQuery, string $selectedStatus): void
     {
-        abort_unless($orderItem->order_id === $order->id, 404);
-
-        return OrderItem::query()
-            ->forSeller($request->user())
-            ->whereKey($orderItem->id)
-            ->firstOrFail();
+        $legacy = OrderItem::mapLegacySellerStatus($selectedStatus);
+        $itemQuery->where(function (Builder $query) use ($selectedStatus, $legacy): void {
+            $query->where('fulfillment_status', $selectedStatus)
+                ->orWhere(function (Builder $legacyQuery) use ($selectedStatus, $legacy): void {
+                    $legacyQuery->whereNull('fulfillment_status')->where('seller_status', $legacy === $selectedStatus ? $selectedStatus : $legacy);
+                });
+        });
     }
 
     /**
@@ -150,9 +191,13 @@ class SellerOrderController extends Controller
     private function sellerStatuses(): array
     {
         return [
-            OrderItem::SELLER_STATUS_PENDING => __('Pending'),
-            OrderItem::SELLER_STATUS_CONFIRMED => __('Confirmed'),
-            OrderItem::SELLER_STATUS_COMPLETED => __('Completed'),
+            OrderItem::FULFILLMENT_PENDING => __('Pending confirmation'),
+            OrderItem::FULFILLMENT_CONFIRMED => __('Confirmed'),
+            OrderItem::FULFILLMENT_READY_FOR_PICKUP => __('Ready for pickup'),
+            OrderItem::FULFILLMENT_OUT_FOR_DELIVERY => __('Out for delivery'),
+            OrderItem::FULFILLMENT_AWAITING_BUYER_CONFIRMATION => __('Cash received - awaiting buyer confirmation'),
+            OrderItem::FULFILLMENT_COMPLETED => __('Completed'),
+            OrderItem::FULFILLMENT_DISPUTED => __('Disputed'),
         ];
     }
 }

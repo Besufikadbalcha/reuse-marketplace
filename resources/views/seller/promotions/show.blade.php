@@ -23,7 +23,8 @@
         <x-button as="a" :href="route('seller.promotions.index')" variant="secondary" class="w-full sm:w-auto">{{ __('Back to promotions') }}</x-button>
         @if ($promotion->status === App\Models\ProductPromotion::STATUS_PAYMENT_REJECTED
             && $latestSubmission?->isRejected()
-            && $promotion->product?->status === App\Models\Product::STATUS_APPROVED)
+            && $promotion->product?->status === App\Models\Product::STATUS_APPROVED
+            && ! $promotion->product?->isArchived())
             <x-gradient-button as="a" :href="route('seller.promotions.resubmit', $promotion)" class="w-full sm:w-auto">{{ __('Resubmit payment proof') }}</x-gradient-button>
         @endif
     </div>

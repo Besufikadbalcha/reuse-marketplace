@@ -46,11 +46,12 @@
     @else
         <div class="brand-panel overflow-hidden border border-white/70 bg-white/65 backdrop-blur-2xl dark:border-white/10 dark:bg-forest-950/70">
             <div class="overflow-x-auto">
-                <table class="w-full min-w-[760px] text-left text-sm">
+                <table class="w-full min-w-[900px] text-left text-sm">
                     <thead class="border-b border-sage-200 bg-sage-100/70 text-xs font-semibold uppercase tracking-widest text-forest-700 dark:border-white/10 dark:bg-forest-900/60 dark:text-mint-200">
                         <tr>
                             <th scope="col" class="px-5 py-4">{{ __('Listing') }}</th>
                             <th scope="col" class="px-5 py-4">{{ __('Status') }}</th>
+                            <th scope="col" class="px-5 py-4">{{ __('Promotion') }}</th>
                             <th scope="col" class="px-5 py-4">{{ __('Price') }}</th>
                             <th scope="col" class="px-5 py-4">{{ __('Images') }}</th>
                             <th scope="col" class="px-5 py-4">{{ __('Actions') }}</th>
@@ -58,6 +59,10 @@
                     </thead>
                     <tbody class="divide-y divide-sage-200 dark:divide-white/10">
                         @foreach ($products as $product)
+                            @php
+                                $promotion = $promotionsByProductId->get($product->id);
+                                $promotionIsOpen = $promotion?->isOpen() ?? false;
+                            @endphp
                             <tr class="transition hover:bg-cream-50/70 dark:hover:bg-forest-900/40">
                                 <td class="px-5 py-4">
                                     <div class="flex items-center gap-3">
@@ -82,6 +87,27 @@
                                             default => __(ucfirst($product->status)),
                                         } }}
                                     </x-badge>
+                                    @if ($product->isArchived())
+                                        <x-badge tone="cream">{{ __('Archived') }}</x-badge>
+                                    @endif
+                                </td>
+                                <td class="px-5 py-4">
+                                    @php
+                                        $promotionTone = match ($promotion?->status) {
+                                            App\Models\ProductPromotion::STATUS_PAYMENT_PENDING => 'cream',
+                                            App\Models\ProductPromotion::STATUS_PAYMENT_REJECTED => 'blush',
+                                            App\Models\ProductPromotion::STATUS_ACTIVE => 'mint',
+                                            App\Models\ProductPromotion::STATUS_PAUSED => 'cream',
+                                            App\Models\ProductPromotion::STATUS_EXPIRED => 'sage',
+                                            App\Models\ProductPromotion::STATUS_STOPPED_SOLD => 'blush',
+                                            default => 'sage',
+                                        };
+                                    @endphp
+                                    @if ($promotion !== null)
+                                        <x-badge :tone="$promotionTone">{{ $promotion->statusLabel() }}</x-badge>
+                                    @else
+                                        <span class="text-xs text-sage-700 dark:text-mint-100/70">{{ __('No promotion') }}</span>
+                                    @endif
                                 </td>
                                 <td class="px-5 py-4 text-xl font-semibold text-forest-900 dark:text-white">{{ $product->formattedPrice() }}</td>
                                 <td class="px-5 py-4">{{ $product->images->count() }}</td>
@@ -89,18 +115,21 @@
                                     <div class="flex flex-wrap items-center gap-3">
                                         <a href="{{ route('seller.products.show', $product) }}" class="rounded-full px-2 py-1 text-sm font-medium text-forest-700 hover:bg-sage-100 hover:underline focus-ring dark:text-mint-100 dark:hover:bg-forest-800">{{ __('View') }}</a>
                                         <a href="{{ route('seller.products.edit', $product) }}" class="rounded-full px-2 py-1 text-sm font-medium text-forest-700 hover:bg-sage-100 hover:underline focus-ring dark:text-mint-100 dark:hover:bg-forest-800">{{ __('Edit') }}</a>
-                                        @if (in_array($product->id, $openPromotionProductIds, true))
-                                            <a href="{{ route('seller.promotions.index') }}" class="rounded-full px-2 py-1 text-sm font-medium text-forest-700 hover:bg-sage-100 hover:underline focus-ring dark:text-mint-100 dark:hover:bg-forest-800">{{ __('View promotion') }}</a>
-                                        @elseif ($product->status === App\Models\Product::STATUS_APPROVED)
-                                            <a href="{{ route('seller.promotions.create', $product) }}" class="rounded-full px-2 py-1 text-sm font-medium text-forest-700 hover:bg-sage-100 hover:underline focus-ring dark:text-mint-100 dark:hover:bg-forest-800">{{ __('Promote product') }}</a>
+                                        @if ($promotion?->status === App\Models\ProductPromotion::STATUS_PAYMENT_REJECTED)
+                                            <a href="{{ route('seller.promotions.show', $promotion) }}" class="rounded-full px-2 py-1 text-sm font-medium text-forest-700 hover:bg-sage-100 hover:underline focus-ring dark:text-mint-100 dark:hover:bg-forest-800">{{ __('Resubmit Payment') }}</a>
+                                        @elseif ($promotionIsOpen)
+                                            <a href="{{ route('seller.promotions.show', $promotion) }}" class="rounded-full px-2 py-1 text-sm font-medium text-forest-700 hover:bg-sage-100 hover:underline focus-ring dark:text-mint-100 dark:hover:bg-forest-800">{{ __('View Promotion') }}</a>
+                                        @elseif ($product->status === App\Models\Product::STATUS_APPROVED && ! $product->isArchived())
+                                            <a href="{{ route('seller.promotions.create', $product) }}" class="rounded-full px-2 py-1 text-sm font-medium text-forest-700 hover:bg-sage-100 hover:underline focus-ring dark:text-mint-100 dark:hover:bg-forest-800">{{ __('Request Promotion') }}</a>
                                         @endif
                                         @if ($product->order_items_count > 0)
                                             <span class="text-xs text-sage-700 dark:text-mint-100/70">{{ __('Order history') }}</span>
-                                        @else
-                                            <form method="POST" action="{{ route('seller.products.destroy', $product) }}" onsubmit="return confirm('{{ __('Delete this listing?') }}')">
+                                        @endif
+                                        @if (! $product->isArchived())
+                                            <form method="POST" action="{{ route('seller.products.destroy', $product) }}" onsubmit="return confirm('{{ __('Archive this listing?') }}')">
                                                 @csrf
                                                 @method('DELETE')
-                                                <button type="submit" class="rounded-full px-2 py-1 text-sm font-medium text-blush-700 hover:bg-blush-100 hover:underline focus-ring dark:text-blush-200 dark:hover:bg-blush-900/40">{{ __('Delete') }}</button>
+                                                <button type="submit" class="rounded-full px-2 py-1 text-sm font-medium text-blush-700 hover:bg-blush-100 hover:underline focus-ring dark:text-blush-200 dark:hover:bg-blush-900/40">{{ __('Archive') }}</button>
                                             </form>
                                         @endif
                                     </div>

@@ -62,6 +62,26 @@
             </div>
 
             <div class="grid gap-3 rounded-[1.75rem] border border-white/70 bg-white/65 p-6 shadow-soft backdrop-blur-2xl dark:border-white/10 dark:bg-forest-950/70">
+                @if ($canRequestPromotion)
+                    <x-button as="a" href="{{ route('seller.promotions.create', $product) }}" class="w-full">{{ __('Promote This Item') }}</x-button>
+                @endif
+
+                @if ($promotion !== null)
+                    <div class="grid gap-2 rounded-xl bg-sage-100/60 p-3 dark:bg-forest-900/50">
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="text-xs font-semibold uppercase tracking-widest text-forest-600 dark:text-mint-300">{{ __('Promotion') }}</span>
+                            <x-badge :tone="$promotion->status === App\Models\ProductPromotion::STATUS_PAYMENT_REJECTED ? 'blush' : ($promotionIsOpen ? 'cream' : 'mint')">
+                                {{ $promotion->statusLabel() }}
+                            </x-badge>
+                        </div>
+                        @if ($promotion->status === App\Models\ProductPromotion::STATUS_PAYMENT_REJECTED)
+                            <x-button as="a" href="{{ route('seller.promotions.show', $promotion) }}" variant="secondary" class="w-full">{{ __('Resubmit Payment') }}</x-button>
+                        @elseif ($promotionIsOpen)
+                            <x-button as="a" href="{{ route('seller.promotions.show', $promotion) }}" variant="secondary" class="w-full">{{ __('View Promotion') }}</x-button>
+                        @endif
+                    </div>
+                @endif
+
                 <x-button as="a" href="{{ route('seller.products.edit', $product) }}" class="w-full">{{ __('Edit listing') }}</x-button>
 
                 <form method="POST" action="{{ route('seller.products.destroy', $product) }}" onsubmit="return confirm('{{ __('Delete this listing?') }}')">
